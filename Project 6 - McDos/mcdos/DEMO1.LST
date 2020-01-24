@@ -1,0 +1,362 @@
+Microsoft (R) Macro Assembler Version 6.11		    10/31/19 21:07:12
+demo1.asm						     Page 1 - 1
+
+
+
+				.model tiny,stdcall
+				.8086
+				.stack 200h
+
+ 0000				.code
+					ORG	100h
+ 0100				start:
+ 0100  E9 096C				jmp	setup
+
+ = 000A				num_bytes = 10d
+
+ 0103 30 31 32 33 34 35		chars BYTE '0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'
+       36 37 38 39 41 42
+       43 44 45 46
+
+ 0113 1E61 3062 2E63 2064	actualascii WORD 1E61h,3062h,2e63h,2064h,1265h,2166h,2267h,2368h,1769h,246ah,
+       1265 2166 2267
+       2368 1769 246A
+       256B 266C 326D
+       316E 186F 1970
+       1071 1372 1F73
+       1474 1675 2F76
+       1177 2D78 1579
+       2C7A
+						 256bh,266ch,326dh,316eh,186fh,1970h,1071h,1372h,1f73h,1474h,
+						 1675h,2f76h,1177h,2d78h,1579h,2c7ah
+
+ 0147 0000			readmacrosstatus WORD 0
+
+ 0149  0400 [			int9Stack WORD 400h DUP(?)
+        0000
+       ]
+ 0949				int9label LABEL WORD
+ 0949 0000			oldSPint9 WORD ?
+ 094B 0000			oldSSint9 WORD ?
+ 094D 0000			tempDxHolder WORD ?
+
+
+ 094F				int9handler PROC
+ 094F  FA				cli
+					
+ 0950  2E: 89 26 0949 R			mov	cs:[oldSPint9], sp
+ 0955  2E: 8C 16 094B R			mov	cs:[oldSSint9], ss
+ 095A  2E: 89 16 094D R			mov	cs:[tempDxHolder], dx
+ 095F  BC 0949 R			mov	sp, OFFSET cs:[int9label]
+ 0962  8C CA				mov	dx, cs
+ 0964  8E D2				mov	ss, dx
+ 0966  2E: 8B 16 094D R			mov	dx, cs:[tempDxHolder]
+
+					
+ 096B				normalInt:
+ 096B  9C				pushf
+ 096C  2E: FF 1E 09F9 R			call	cs:[old_interrupt9]
+ 0971  FA				cli
+
+ 0972  9C				pushf
+ 0973  56				push	si
+ 0974  06				push	es
+ 0975  52				push	dx
+ 0976  51				push	cx
+ 0977  53				push	bx
+ 0978  50				push	ax
+
+
+ 0979  BB 0040				mov	bx, 40h
+ 097C  8E C3				mov	es, bx
+ 097E  26: 8B 1E 001C			mov	bx, es:[1ch]
+ 0983  83 EB 02				sub	bx, 02h
+ 0986  83 FB 1E				cmp	bx, 1eh
+ 0989  73 03				jae	cs:[bxisnormal]
+ 098B  BB 003C				mov	bx, 3ch
+ 098E				bxisnormal:
+ 098E  26: 8B 07			mov	ax, es:[bx]
+
+ 0991  2E: 8B 0E 0147 R			mov	cx, cs:readmacrosstatus
+ 0996  83 F9 01				cmp	cx, 01
+ 0999  74 34				je	cs:[checkifenable]
+ 099B  3D 0231				cmp	ax, 0231h
+ 099E  74 3E				je	cs:[disablemacro]
+					
+ 09A0  3C 61				cmp	al, 61h
+ 09A2  72 42				jb	cs:[restorefunregs]
+ 09A4  3C 7A				cmp	al, 7ah
+ 09A6  77 3E				ja	cs:[restorefunregs]
+ 09A8  53				push	bx
+
+ 09A9  B4 00				mov	ah, 00h
+ 09AB  FB				sti
+ 09AC  CD 1A				int	1Ah
+ 09AE  FA				cli
+ 09AF  B4 00				mov	ah, 00h
+ 09B1  8A C2				mov	al, dl
+ 09B3  B3 1A				mov	bl, 26d
+ 09B5  F6 F3				div	bl
+ 09B7  24 00				and	al, 00
+ 09B9  B1 08				mov	cl, 8
+ 09BB  D3 E8				shr	ax, cl
+ 09BD  8B F0				mov	si, ax
+ 09BF  03 F0				add	si, ax
+
+				;	pop	bx
+ 09C1  BB 0113 R			mov	bx, offset cs:actualascii
+ 09C4  03 DE				add	bx, si
+ 09C6  2E: 8B 07			mov	ax, cs:[bx]
+
+ 09C9  5B				pop	bx
+					
+ 09CA  26: 89 07			mov	es:[bx], ax
+ 09CD  EB 17				jmp	cs:[restorefunregs]
+
+ 09CF				checkifenable:
+ 09CF  3D 0B30				cmp	ax, 0b30h
+ 09D2  75 12				jne	cs:[restorefunregs]
+ 09D4  B9 0000				mov	cx, 00h
+ 09D7  2E: 89 0E 0147 R			mov	cs:readmacrosstatus, cx
+ 09DC  EB 08				jmp	cs:[restorefunregs]
+
+ 09DE				disablemacro:
+ 09DE  B9 0001				mov	cx, 01h
+ 09E1  2E: 89 0E 0147 R			mov	cs:readmacrosstatus, cx
+
+ 09E6				restorefunregs:
+ 09E6  58				pop	ax
+ 09E7  5B				pop	bx
+ 09E8  59				pop	cx
+ 09E9  5A				pop	dx
+ 09EA  07				pop	es
+ 09EB  5E				pop	si
+ 09EC  9D				popf
+						
+ 09ED				bottom:
+ 09ED  2E: 8E 16 094B R			mov	ss, cs:[oldSSint9]
+ 09F2  2E: 8B 26 0949 R			mov	sp, cs:[oldSPint9]
+
+ 09F7  FB				sti
+ 09F8  CF				iret
+
+ 09F9 00000000			old_interrupt9 DWORD ?
+
+ 09FD				int9handler ENDP
+
+				;-------------------------------------------
+ 09FD				BiosOutputChar PROC
+ 09FD  50				push	ax
+ 09FE  9C				pushf
+ 09FF  B4 0E				mov	ah, 0eh
+ 0A01  CD 10				int	16
+ 0A03  58				pop	ax
+ 0A04  9D				popf	
+ 0A05  C3				ret	
+ 0A06				BiosOutputChar ENDP
+
+
+ 0A06				end_ISR LABEL BYTE
+
+
+ 0A06				installResCode PROC
+ 0A06  9C				pushf
+ 0A07  56				push	si
+ 0A08  06				push	es
+ 0A09  57				push	di
+ 0A0A  51				push	cx
+ 0A0B  53				push	bx
+ 0A0C  55				push	bp
+ 0A0D  50				push	ax
+
+ 0A0E  2E: 89 2D			mov	cs:[di], bp	;offset
+ 0A11  2E: 89 45 02			mov	cs:[di + 2], ax	;segment
+ 0A15  8C C9				mov	cx, cs
+ 0A17  FA				cli
+ 0A18  26: 89 0C			mov	es:[si], cx	;code segment
+ 0A1B  26: 89 5C FE			mov	es:[si-2], bx	;new handler offset
+ 0A1F  FB				sti
+
+ 0A20  58				pop	ax
+ 0A21  5D				pop	bp
+ 0A22  5B				pop	bx
+ 0A23  59				pop	cx
+ 0A24  5F				pop	di
+ 0A25  07				pop	es
+ 0A26  5E				pop	si
+ 0A27  9D				popf
+ 0A28  C3				ret
+ 0A29				installResCode ENDP
+
+				;-------------------------------------------
+
+ 0A29				uninstallResCode PROC 
+ 0A29  B9 0000				mov	cx, 0
+ 0A2C  8E C1				mov	es, cx
+ 0A2E  FA				cli
+ 0A2F  26: 89 04			mov	es:[si], ax
+ 0A32  26: 89 54 02			mov	es:[si+2], dx
+ 0A36  FB				sti
+					
+ 0A37  C3				ret	
+ 0A38				uninstallResCode ENDP
+
+				;-------------------------------------------
+
+ 0A38				checkForClone PROC			;returns boolean value in bp
+ 0A38  9C				pushf
+ 0A39  56				push	si
+ 0A3A  06				push	es
+ 0A3B  52				push	dx
+ 0A3C  51				push	cx
+ 0A3D  53				push	bx
+ 0A3E  50				push	ax
+
+ 0A3F  8E C0				mov	es, ax
+ 0A41  BE 094F R			mov	si, offset int9handler
+ 0A44  B9 000A				mov	cx, num_bytes
+ 0A47  BF 0001				mov	di, 1d			;assume I have installed myself
+
+ 0A4A				Clone:
+ 0A4A  83 F9 00				cmp	cx, 00
+ 0A4D  74 18				je	bottomend
+
+ 0A4F  50				push	ax
+ 0A50  B4 0E				mov	ah, 0eh
+ 0A52  B0 2D				mov	al, '-'
+ 0A54  CD 10				int	16
+ 0A56  58				pop	ax
+
+ 0A57  2E: 8B 14			mov	dx, cs:[si]
+ 0A5A  26: 39 17			cmp	es:[bx], dx
+ 0A5D  75 05				jne	cleardi
+ 0A5F  46				inc	si
+ 0A60  43				inc	bx
+ 0A61  49				dec	cx
+ 0A62  EB E6				jmp	Clone
+
+ 0A64				cleardi:
+ 0A64  BF 0000				mov	di, 0h
+
+ 0A67				bottomend:
+ 0A67  58				pop	ax
+ 0A68  5B				pop	bx
+ 0A69  59				pop	cx
+ 0A6A  5A				pop	dx
+ 0A6B  07				pop	es
+ 0A6C  5E				pop	si
+ 0A6D  9D				popf
+ 0A6E  C3				ret	
+ 0A6F				checkForClone ENDP
+
+				;-------------------------------------------
+
+ 0A6F				setup:
+ 0A6F  B9 0000				mov	cx, 0
+ 0A72  8E C1				mov	es, cx
+ 0A74  BE 0024				mov	si, 24h
+ 0A77  26: 8B 1C			mov	bx, es:[si]	;offset
+ 0A7A  8B EB				mov	bp, bx		;temp storage
+ 0A7C  83 C6 02				add	si, 02h
+ 0A7F  26: 8B 04			mov	ax, es:[si]	;segment
+
+ 0A82  E8 FFB3				call	checkforClone
+ 0A85  83 FF 01				cmp	di, 01d
+ 0A88  74 0D				je	uninstallMycode
+ 0A8A  EB 00				jmp	install
+
+ 0A8C				install:	
+ 0A8C  BF 09F9 R			mov	di, offset old_interrupt9	;install int9 handler
+
+ 0A8F  BB 094F R			mov	bx, offset int9handler
+ 0A92  E8 FF71				call	installResCode
+
+ 0A95  EB 13				jmp	bottom
+
+ 0A97				uninstallMycode:
+ 0A97  8E C0				mov	es, ax	
+ 0A99  BE 0024				mov	si, 24h				;int num for 9 * 4
+ 0A9C  B8 0045				mov	ax, 0045h			;offset for int9
+ 0A9F  BA 0585				mov	dx, 0585h			;seg for int9
+ 0AA2  E8 FF84				call	uninstallResCode
+
+ 0AA5  B8 4C00				mov	ax, 4c00h
+ 0AA8  CD 21				int	21h
+					
+ 0AAA				bottom:
+ 0AAA  B8 3100				mov	ax, 3100h
+ 0AAD  BA 0A06 R			mov	dx, offset end_ISR
+ 0AB0  B1 04				mov	cl, 4
+ 0AB2  D3 EA				shr	dx, cl
+ 0AB4  42				inc	dx
+ 0AB5  CD 21				int	21h
+					
+				END start
+Microsoft (R) Macro Assembler Version 6.11		    10/31/19 21:07:12
+demo1.asm						     Symbols 2 - 1
+
+
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+DGROUP . . . . . . . . . . . . .	GROUP
+_TEXT  . . . . . . . . . . . . .	16 Bit	 0AB7	  Word	  Public  'CODE'	
+_DATA  . . . . . . . . . . . . .	16 Bit	 0000	  Word	  Public  'DATA'	
+STACK  . . . . . . . . . . . . .	16 Bit	 0200	  Para	  Stack	  'STACK'	 
+
+
+Procedures,  parameters and locals:
+
+                N a m e                 Type     Value    Attr
+
+BiosOutputChar . . . . . . . . .	P Near	 09FD	  _TEXT	Length= 0009 Public STDCALL
+checkForClone  . . . . . . . . .	P Near	 0A38	  _TEXT	Length= 0037 Public STDCALL
+  Clone  . . . . . . . . . . . .	L Near	 0A4A	  _TEXT	
+  cleardi  . . . . . . . . . . .	L Near	 0A64	  _TEXT	
+  bottomend  . . . . . . . . . .	L Near	 0A67	  _TEXT	
+installResCode . . . . . . . . .	P Near	 0A06	  _TEXT	Length= 0023 Public STDCALL
+int9handler  . . . . . . . . . .	P Near	 094F	  _TEXT	Length= 00AE Public STDCALL
+  normalInt  . . . . . . . . . .	L Near	 096B	  _TEXT	
+  bxisnormal . . . . . . . . . .	L Near	 098E	  _TEXT	
+  checkifenable  . . . . . . . .	L Near	 09CF	  _TEXT	
+  disablemacro . . . . . . . . .	L Near	 09DE	  _TEXT	
+  restorefunregs . . . . . . . .	L Near	 09E6	  _TEXT	
+  bottom . . . . . . . . . . . .	L Near	 09ED	  _TEXT	
+uninstallResCode . . . . . . . .	P Near	 0A29	  _TEXT	Length= 000F Public STDCALL
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+@CodeSize  . . . . . . . . . . .	Number	 0000h	 
+@DataSize  . . . . . . . . . . .	Number	 0000h	 
+@Interface . . . . . . . . . . .	Number	 0003h	 
+@Model . . . . . . . . . . . . .	Number	 0001h	 
+@code  . . . . . . . . . . . . .	Text   	 DGROUP
+@data  . . . . . . . . . . . . .	Text   	 DGROUP
+@fardata?  . . . . . . . . . . .	Text   	 FAR_BSS
+@fardata . . . . . . . . . . . .	Text   	 FAR_DATA
+@stack . . . . . . . . . . . . .	Text   	 DGROUP
+actualascii  . . . . . . . . . .	Word	 0113	  _TEXT	
+bottom . . . . . . . . . . . . .	L Near	 0AAA	  _TEXT	
+chars  . . . . . . . . . . . . .	Byte	 0103	  _TEXT	
+end_ISR  . . . . . . . . . . . .	Byte	 0A06	  _TEXT	
+install  . . . . . . . . . . . .	L Near	 0A8C	  _TEXT	
+int9Stack  . . . . . . . . . . .	Word	 0149	  _TEXT	
+int9label  . . . . . . . . . . .	Word	 0949	  _TEXT	
+num_bytes  . . . . . . . . . . .	Number	 000Ah	 
+oldSPint9  . . . . . . . . . . .	Word	 0949	  _TEXT	
+oldSSint9  . . . . . . . . . . .	Word	 094B	  _TEXT	
+old_interrupt9 . . . . . . . . .	DWord	 09F9	  _TEXT	
+readmacrosstatus . . . . . . . .	Word	 0147	  _TEXT	
+setup  . . . . . . . . . . . . .	L Near	 0A6F	  _TEXT	
+start  . . . . . . . . . . . . .	L Near	 0100	  _TEXT	
+tempDxHolder . . . . . . . . . .	Word	 094D	  _TEXT	
+uninstallMycode  . . . . . . . .	L Near	 0A97	  _TEXT	
+
+	   0 Warnings
+	   0 Errors

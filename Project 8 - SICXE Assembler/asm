@@ -1,0 +1,1274 @@
+#!/usr/bin/python3
+
+import sys
+import os
+import re
+import math
+
+opcode_table = {'add':['m', 1,'3', '18'],
+                'addf':['m', 1, '3', '58'],
+                'addr':['r', 2, '2', '90'],
+                'and':['m', 1,'3', '40'],
+                'clear':['r1', 1, '2', 'B4'],
+                'comp':['m',1,'3', '28'],
+                'compf':['m',1,'3', '88'],
+                'compr':['r',2,'2','A0'],
+                'div':['m',1,'3','24'],
+                'divf':['m',1,'3','64'],
+                'divr':['r',2,'2','9C'],
+                'fix':[None,0,'1','C4'],
+                'float':[None,0,'1','C0'],
+                'hio':[None,0,'1','F4'],
+                'j':['m',1,'3','3C'],
+                'jeq':['m',1,'3','30'],
+                'jgt':['m',1,'3','34'],
+                'jlt':['m',1,'3','38'],
+                'jsub':['m',1,'3','48'],
+                'lda':['m',1,'3','00'],
+                'ldb':['m',1,'3','68'],
+                'ldch':['m',1,'3','50'],
+                'ldf':['m',1,'3','70'],
+                'ldl':['m',1,'3','08'],
+                'lds':['m',1,'3','6C'],
+                'ldt':['m',1,'3','74'],
+                'ldx':['m',1,'3','04'],
+                'lps':['m',1,'3','D0'],
+                'mul':['m',1,'3','20'],
+                'mulf':['m',1,'3','60'],
+                'mulr':['r',2,'2','98'],
+                'norm':[None,0,'1','C8'],
+                'or':['m',1,'3','44'],
+                'rd':['m',1,'3','D8'],
+                'rmo':['r',2,'2','AC'],
+                'rsub':[None,0,'3','4C'],
+                'shiftl':['r/n',2,'2','A4'],
+                'shiftr':['r/n',2,'2','A8'],
+                'sio':[None,0,'1','F0'],
+                'ssk':['m',1,'3','EC'],
+                'sta':['m',1,'3','0C'],
+                'stb':['m',1,'3','78'],
+                'stch':['m',1,'3','54'],
+                'stf':['m',1,'3', '80'],
+                'sti':['m',1,'3','D4'],
+                'stl':['m',1,'3','14'],
+                'sts':['m',1,'3','7C'],
+                'stsw':['m',1,'3','E8'],
+                'stt':['m',1,'3','84'],
+                'stx':['m',1,'3','10'],
+                'sub':['m',1,'3','1C'],
+                'subf':['m',1,'3','5C'],
+                'subr':['r',2,'2','94'],
+                'svc':['n',1,'2','B0'],
+                'td':['m',1,'3','E0'],
+                'tio':[None,0, '1', 'F8'],
+                'tix':['m',1, '3', '2C'],
+                'tixr':['r1',1, '2', 'B8'],
+                'wd':['m',1, '3', 'DC']}
+
+# types of operands: m, r, r/n, None
+# number of operands: 0, 1, 2
+
+registers = ['a','x', 'l', 'pc', 'sw', 'b', 's', 't', 'f']
+
+all_objCode = []
+
+reg_nums = [0, 1, 2, 8, 9, 3, 4, 5, 6] 
+
+directives = ['end', 'nobase', 'base', 'start', 'resw', 'resb', 'byte', 'word']
+
+sym_tab = {}
+
+symbols_undef = []
+
+extra_space = []
+
+line_lst = []
+
+based_holder = [False]
+
+master_lst = []
+
+machine_code = []
+
+startProvided = [None, '']
+
+# based = False
+
+#### NOTES #####
+
+# to convert from hex, do int('hex_num', 16)
+# to convert to hex, do hex(int_num)
+
+
+###############
+
+class Line:
+    ''' A class for each line read from the input source code '''
+
+    #constructor
+    def __init__(self, orig, line_num, pc_ctr, label=None,mnemonic=None,comment=None, optype=None,
+                 operand1=None, operand2=None, immediate=False, indirect=False, indexed=False,
+                 extended=False, based=False, format_inst=None):
+        self.orig = orig
+        self.label = label
+        self.mnemonic = mnemonic
+        self.line_num = line_num
+        self.pc_ctr = pc_ctr
+        self.optype = optype
+        self.operand1 = operand1
+        self.operand2 = operand2
+        self.immediate = immediate
+        self.indirect = indirect
+        self._format = format_inst
+        self.indexed = indexed
+        self.extended = extended
+        self.based = based
+        self.comment = comment
+
+
+    def __str__(self):
+        return self.orig
+
+    def assemble(self):
+        ''' returns generated machine code for instruction '''
+        if self._format == 1:
+            return opcode_table[self.mnemonic][3]
+        elif self._format == 2:
+            if self.optype == 'r':
+                return opcode_table[self.mnemonic][3] + str(reg_nums[registers.index(self.operand1.lower())]) + str(reg_nums[registers.index(self.operand2.lower())])
+            elif self.optype == 'r1':
+                return opcode_table[self.mnemonic][3] + str(reg_nums[registers.index(self.operand1.lower())]) + '0'
+            elif self.optype == 'n':
+                return opcode_table[self.mnemonic][3] + hex(int(self.operand1))[-1].upper() + '0'
+            else:
+                return opcode_table[self.mnemonic][3] + str(reg_nums[registers.index(self.operand1.lower())]) + hex(int(self.operand2) - 1)[-1].upper()
+        elif self._format == 3:
+            # order of addressing: extended(if + is provided), then based(if base directive provided), then direct, then pc-relative, then sic
+            # for based: 0 <= disp <= 4095
+            # for pc-relative: -2048 <= disp <= 2047
+            opc = opcode_table[self.mnemonic][3]
+            opc_orig = opc
+            if self.mnemonic == 'rsub':
+                return '4F0000'
+            if self.operand1 in symbols_undef:
+                print("Undefined symbol: " + self.operand1 + ' in line ' + self.line_num)
+                sys.exit(1)
+            loc = None
+            if self.operand1.isnumeric():
+                loc = hex(int(self.operand1))
+            else:
+                loc = hex(sym_tab[self.operand1])
+            loc_orig = loc
+            assembled = False
+            #based
+            if self.based:
+                baseloc = None
+                if based_holder[1].lower() in sym_tab:
+                    baseloc = sym_tab[based_holder[1].lower()]
+                    disp = int(loc, 16) - baseloc
+                    if 0 <= disp <= 4095:
+                        assembled = True
+                        disp = hex(disp)[hex(disp).index('x')+1:]
+                        if len(disp) < 3:
+                            while len(disp) < 3:
+                                disp = '0' + disp
+                        if self.immediate:
+                            opc = hex(int(opc, 16) + 1)
+                            opc = opc[opc.index('x') + 1:]
+                            if len(opc) == 1:
+                                opc = '0' + opc
+                            return opc + '4' + disp
+                        elif self.indirect:
+                            opc = hex(int(opc, 16) + 2)
+                            opc = opc[opc.index('x') + 1:]
+                            if len(opc) == 1:
+                                opc = '0' + opc
+                            return opc + '4' + disp
+                        elif self.indexed:
+                            opc = hex(int(opc, 16) + 3)
+                            opc = opc[opc.index('x') + 1:]
+                            if len(opc) == 1:
+                                opc = '0' + opc
+                            return opc + 'C' + disp
+                        else:
+                            opc = hex(int(opc, 16) + 3)
+                            opc = opc[opc.index('x') + 1:]
+                            if len(opc) == 1:
+                                opc = '0' + opc
+                            return opc + '4' + disp
+                elif based_holder[1].isnumeric():
+                    disp = int(loc, 16) - int(based_holder[1])
+                    if 0 <= disp <= 4095:
+                        assembled = True
+                        disp = hex(disp)[hex(disp).index('x')+1:]
+                        if len(disp) < 3:
+                            while len(disp) < 3:
+                                disp = '0' + disp
+                        if self.immediate:
+                            opc = hex(int(opc, 16) + 1)
+                            opc = opc[opc.index('x') + 1:]
+                            if len(opc) == 1:
+                                opc = '0' + opc
+                            return opc + '4' + disp
+                        elif self.indirect:
+                            opc = hex(int(opc, 16) + 2)
+                            opc = opc[opc.index('x') + 1:]
+                            if len(opc) == 1:
+                                opc = '0' + opc
+                            return opc + '4' + disp
+                        elif self.indexed:
+                            opc = hex(int(opc, 16) + 3)
+                            opc = opc[opc.index('x') + 1:]
+                            if len(opc) == 1:
+                                opc = '0' + opc
+                            return opc + 'C' + disp
+                        else:
+                            opc = hex(int(opc, 16) + 3)
+                            opc = opc[opc.index('x') + 1:]
+                            if len(opc) == 1:
+                                opc = '0' + opc
+                            return opc + '4' + disp
+                else:
+                    print("Illegal base directive: " + based_holder[1])
+                    sys.exit(1)
+
+            opc = opc_orig
+            loc = loc_orig
+            # direct
+            if len(loc[loc.index('x') + 1:]) <= 3 and assembled is False:
+                assembled = True
+                disp = loc[loc.index('x') + 1:]
+                while len(disp) < 3:
+                    disp = '0' + disp
+                if self.immediate:
+                    opc = hex(int(opc, 16) + 1)
+                    opc = opc[opc.index('x') + 1:]
+                    if len(opc) == 1:
+                        opc = '0' + opc
+                    return opc + '0' + disp
+                elif self.indirect:
+                    opc = hex(int(opc, 16) + 2)
+                    opc = opc[opc.index('x') + 1:]
+                    if len(opc) == 1:
+                        opc = '0' + opc
+                    return opc + '0' + disp
+                elif self.indexed:
+                    opc = hex(int(opc, 16) + 3)
+                    opc = opc[opc.index('x') + 1:]
+                    if len(opc) == 1:
+                        opc = '0' + opc
+                    return opc + '8' + disp
+                else:
+                    opc = hex(int(opc, 16) + 3)
+                    opc = opc[opc.index('x') + 1:]
+                    if len(opc) == 1:
+                        opc = '0' + opc
+                    return opc + '0' + disp
+
+            opc = opc_orig
+            loc = loc_orig
+            #pc-relative
+            if assembled is False:
+                disp = int(loc, 16) - (self.pc_ctr)
+                if -2048 <= disp <= 2047:
+                    assembled = True
+                    if disp < 0:
+                        disp = 4096 + disp
+                    disp = hex(disp)[hex(disp).index('x')+1:]
+                    while len(disp) < 3:
+                        disp = '0' + disp
+                    if self.immediate:
+                        opc = hex(int(opc, 16) + 1)
+                        opc = opc[opc.index('x') + 1:]
+                        if len(opc) == 1:
+                            opc = '0' + opc
+                        return opc + '2' + disp
+                    elif self.indirect:
+                        opc = hex(int(opc, 16) + 2)
+                        opc = opc[opc.index('x') + 1:]
+                        if len(opc) == 1:
+                            opc = '0' + opc
+                        return opc + '2' + disp
+                    elif self.indexed:
+                        opc = hex(int(opc, 16) + 3)
+                        opc = opc[opc.index('x') + 1:]
+                        if len(opc) == 1:
+                            opc = '0' + opc
+                        return opc + 'A' + disp
+                    else:
+                        opc = hex(int(opc, 16) + 3)
+                        opc = opc[opc.index('x') + 1:]
+                        if len(opc) == 1:
+                            opc = '0' + opc
+                        return opc + '2' + disp
+
+            opc = opc_orig
+            loc = loc_orig            
+            #sic
+            if assembled is False and not (self.immediate or self.indirect):
+                disp = loc[loc.index('x')+1:]
+                if int(disp, 16) <= int('7fff', 16):
+                    assembled = True
+                    if self.indexed:
+                        disp = hex(int('8000', 16) + int(disp, 16))
+                        disp = disp[disp.index('x')+1:]
+                    while len(disp) < 4:
+                        disp = '0' + disp
+                    return opc + disp
+                    
+            if not assembled:
+                print('Memory address too large. Try using extended format in line', self.line_num)
+                sys.exit(1)
+
+        elif self._format == 4:
+            opc = opcode_table[self.mnemonic][3]
+            loc = None
+            if self.operand1.isnumeric():
+                loc = hex(int(self.operand1))
+            else:
+                loc = hex(sym_tab[self.operand1])
+            disp = loc[loc.index('x')+1:]
+            if int(disp, 16) <= int('fffff', 16):
+                while len(disp) < 5:
+                    disp = '0' + disp
+                if self.immediate:
+                    opc = hex(int(opc, 16) + 1)
+                    opc = opc[opc.index('x') + 1:]
+                    if len(opc) == 1:
+                        opc = '0' + opc
+                    return opc + '1' + disp
+                elif self.indirect:
+                    opc = hex(int(opc, 16) + 2)
+                    opc = opc[opc.index('x') + 1:]
+                    if len(opc) == 1:
+                        opc = '0' + opc
+                    return opc + '1' + disp
+                elif self.indexed:
+                    opc = hex(int(opc, 16) + 3)
+                    opc = opc[opc.index('x') + 1:]
+                    if len(opc) == 1:
+                        opc = '0' + opc
+                    return opc + '9' + disp
+                else:
+                    opc = hex(int(opc, 16) + 3)
+                    opc = opc[opc.index('x') + 1:]
+                    if len(opc) == 1:
+                        opc = '0' + opc
+                    return opc + '1' + disp 
+            else:
+                print('Memory address too large for extended format: Line ' + self.line_num)
+                sys.exit(1)
+
+        elif self.mnemonic == 'byte':
+            if self.operand1[0].lower() == 'c':
+                whatIcareFor = self.operand1[2:-1]
+                return ''.join([hex(ord(x))[hex(ord(x)).index('x')+1:] for x in whatIcareFor])
+            elif self.operand1[0].lower() == 'x':
+                whatIcareFor = self.operand1[2:-1]
+                while (len(whatIcareFor) % 2) != 0:
+                    whatIcareFor = '0' + whatIcareFor
+                return whatIcareFor
+            else:
+                temp = hex(int(self.operand1))
+                temp = temp[temp.index('x')+1:]
+                if len(temp) % 2 != 0:
+                    temp = '0' + temp
+                return temp
+        elif self.mnemonic == 'word':
+            temp = hex(int(self.operand1))
+            temp = temp[temp.index('x')+1:]
+            while len(temp) < 6:
+                temp = '0' + temp
+            return temp
+        elif self.mnemonic == 'resb' or self.mnemonic == 'resw':
+            return 'Reserve'
+        return "Directive or comment: Ignore"
+
+
+def parse_asm(line, ctr, linectr):
+
+    if ctr > int('fffff', 16):
+        print('Instruction ends beyond maximum memory address for SIC/XE: Line ' + str(linectr))
+        sys.exit(1)
+
+    line = untabify(line) 
+    # print('Length of line is',len(line)) 
+    orig = line
+    line, comment_ = orig[:40], orig[40:]
+    label_ = None
+    label_pres_case = None
+    mnemonic = None
+    operand1 = None
+    operand2 = None
+    format_instr = None
+    ext = False
+    imm = False
+    indexed = False
+    indirect = False
+    optype = None
+    
+    FullCommentRe = re.compile(r'^\s*\.+(?P<fullcomment>.*)$')
+    comment_search = FullCommentRe.search(line)
+    if comment_search:
+        comment_ = comment_search.group('fullcomment')
+        # print('This is the comment: ')
+        # print(comment_)
+        # print('-------')
+        line_lst.append(Line(orig, linectr, ctr, label_, mnemonic, comment_, optype,
+                             operand1, operand2, imm, indirect, indexed, ext, based_holder[0], format_instr))
+        linectr += 1
+        return (ctr, False, linectr)
+
+    LabelRe = re.compile(r'^\s*(?P<label>[a-z0-9_]*)\s*:', re.IGNORECASE)
+    label_search = LabelRe.search(line)
+    if label_search:
+        label_pres_case = label_search.group('label')
+        label_ = label_search.group('label').lower()
+        if label_ in registers:
+            print('Register used where label expected in line ' + str(linectr))
+            sys.exit(1)
+        line = line[line.index(':')+1:]
+        if label_search.group('label').lower() in sym_tab:
+            print('Error: Line ' + str(linectr) +  ', Symbol redefinition: ', label_search.group('label').lower())
+            sys.exit(1)
+        if label_search.group('label')[0].isnumeric():
+            if not label_search.group('label').isnumeric():
+                print('Extraneous characters in line ' + str(linectr))
+                sys.exit(1)
+        sym_tab[label_search.group('label').lower()] = ctr
+        if label_search.group('label').lower() in symbols_undef:
+            symbols_undef.remove(label_search.group('label').lower())
+    else:
+        if ':' in line and line.count('\'') < 2:
+            temp_label = line[:line.index(':')]
+            if temp_label[0].isalpha() is False:
+                print('Label must start with letters. Error in line ' + str(linectr))
+                print(orig)
+                sys.exit(1)
+    
+    if line.isspace() or line == '':
+        line_lst.append(Line(orig, linectr, ctr, label_, mnemonic, comment_, optype,
+                             operand1, operand2, imm, indirect, indexed, ext, based_holder[0], format_instr))
+        linectr += 1
+        return (ctr, False, linectr)
+
+    # MnemonicRe = re.compile(r'\s*(?P<mnemonic>\+*[a-z]+)\s*', re.IGNORECASE)
+    MnemonicRe = re.compile(r'\s*(?P<mnemonic>\+*\s*[a-z]+)\s*', re.IGNORECASE)
+    mnemonic_search = MnemonicRe.search(line)
+    curr_mnemonic = None
+    if mnemonic_search:
+        curr_mnemonic = mnemonic_search.group('mnemonic').lower()
+        line = line.lstrip()
+        # line = line[len(curr_mnemonic)+1:]
+        line = line[len(curr_mnemonic):]
+        if curr_mnemonic[0] == '+':
+            ext = True
+            curr_mnemonic = curr_mnemonic[1:].lstrip()
+            if opcode_table[curr_mnemonic][0] != 'm':
+                print('Unrecognized instruction or directive: Line ' + str(linectr))
+                sys.exit(1)
+    else:
+        print('Invalid instruction in line ' + str(linectr))
+        sys.exit(1)
+
+    curr_mnemonic = curr_mnemonic.rstrip()
+    mnemonic = curr_mnemonic
+    # print('for line:',orig)
+    # print('label is:',label_)
+    # print('mnemonic is:',mnemonic)
+    # print('is extended:',ext)
+
+    #check if its a directive
+    if curr_mnemonic in directives:
+        if curr_mnemonic == 'byte':
+            byteRe = re.compile(r'\s*(?P<byte>c*x*\'*-*.+\'*)\s*', re.IGNORECASE)
+            bytesearch = byteRe.search(line)
+            if bytesearch:
+                line = line.lstrip()
+                line = line[len(bytesearch.group('byte')):]
+                if not line.isspace() and line != '':
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                num_bytes = bytesearch.group('byte')
+                num_bytes = num_bytes.rstrip()
+                operand1 = num_bytes
+                if num_bytes[:2].lower() == 'c\'':
+                    if num_bytes.count('\'') < 2:
+                        print('Illegal declaration of bytes in line ' + str(linectr))
+                        print(orig)
+                        sys.exit(1)
+                    if num_bytes[-1] != '\'':
+                        while num_bytes[-1] != '\'':
+                            num_bytes = num_bytes[:-1]
+
+                    # temp test for unprintable
+                    unprint = [ord(x) for x in num_bytes[2:-1] if ord(x) > 127]
+                    if unprint:
+                        print('Use printable characters in byte declaration??')
+                        sys.exit(1)
+
+                    ctr += len(num_bytes[2:-1])
+                elif num_bytes[:2].lower() == 'x\'':
+                    if num_bytes.count('\'') != 2:
+                        print('Illegal declaration of bytes in line ' + str(linectr))
+                        print(orig)
+                        sys.exit(1)
+                    if num_bytes[-1] != '\'':
+                        while num_bytes[-1] != '\'':
+                            num_bytes = num_bytes[:-1]
+                    for char in num_bytes[2:-1]:
+                        if char.lower() not in '0123456789abcdef':
+                            print('Illegal declaration of bytes in line ' + str(linectr))
+                            print(orig)
+                            sys.exit(1)
+                    ctr += math.ceil((len(num_bytes[2:-1])) / 2)
+                else:
+                    sign = ''
+                    neg = False
+                    if operand1[0] == '-' or operand1[0] == '+':
+                        sign = operand1[0]
+                        if sign == '-':
+                            neg = True
+                        operand1 = operand1[1:]
+                    if not operand1.isnumeric():
+                        print('Illegal declaration of constant in line ' + str(linectr))
+                        sys.exit(1)
+                    operand1 = sign + operand1
+                    if int(operand1) <  -128 or int(operand1) > 255:
+                        print('Byte size too large: Line ' + str(linectr))
+                        sys.exit(1)
+                    operand1 = int(operand1)
+                    if operand1 == 0 and neg:
+                        print('cant use -0')
+                        sys.exit(1)
+                    if operand1 < 0:
+                        operand1 = int('100',16) + operand1
+                    operand1 = str(operand1)
+                    ctr += 1
+            else:
+                print('Please declare a byte in line ' + str(linectr))
+                sys.exit(1)
+        elif curr_mnemonic == 'word':
+            temp_line = line.lstrip()
+            c = 0
+            neg = False
+            if temp_line[0] == '-' or temp_line[0] == '+':
+                c = 1
+                neg = True if temp_line[0] == '-' else False
+            while temp_line[c] in '0123456789':
+                c += 1
+            if not temp_line[c:].isspace() and temp_line[c:] != '':
+                print('Extraneous characters in line ' + str(linectr))
+                print(orig)
+                sys.exit(1)
+            num = int(temp_line[:c])
+            if neg and num == 0:
+                print('cant allow -0')
+                sys.exit(1)
+            if num >= pow(16, 6) or num < (-(pow(16, 6)) / 2):
+                print('Memory error: Line '+ str(linectr) + ', Size of bytes being reserved too large')
+                sys.exit(1)
+            if num < 0:
+                num = int('1000000', 16) + num
+            operand1 = str(num)
+            ctr += 3
+        elif curr_mnemonic == 'resb':
+            temp_line = line.lstrip()
+            if temp_line.rstrip() == '' or len([x for x in temp_line.rstrip() if x not in '0123456789']) != 0:
+                print("Provide a number of bytes to reserve in line " + str(linectr))
+                sys.exit(1)
+            c = 0
+            while temp_line[c] in '0123456789':
+                c += 1
+            if not temp_line[c:].isspace() and temp_line[c:] != '':
+                print('Extraneous characters in line ' + str(linectr))
+                print(orig)
+                sys.exit(1)
+            num = int(temp_line[:c])
+            operand1 = num
+            extra_space.append(num)
+            ctr += num
+        elif curr_mnemonic == 'base':
+            based_holder[0] = True
+            basedopsearch = re.compile(r'\s*(?P<based>@*#*\s*[a-z0-9_]+)\s*', re.IGNORECASE)
+            basedsearch = basedopsearch.search(line)
+            if basedsearch:
+                line = line.lstrip()
+                line = line[len(basedsearch.group('based')):]
+                if not line.isspace() and line != '':
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                based_sym = basedsearch.group('based').rstrip()
+                if based_sym[0] == '_':
+                    print('Illegal base directive: Line ' + str(linectr))
+                    sys.exit(1)
+                if based_sym[0].isnumeric() and len(based_sym) > 1:
+                    if not based_sym[1:].isnumeric():
+                        print('Extraneous characters in line ' + str(linectr))
+                        sys.exit(1)
+                if based_sym in registers:
+                  print('Register used where label expected: Line ' + str(linectr))
+                  sys.exit(1)
+                operand1 = based_sym
+                based_holder.append(based_sym)
+            else:
+                print('Provide a symbol for the base directive in line ' + str(linectr))
+                sys.exit(1)
+        elif curr_mnemonic == 'nobase':
+            based_holder[0] = False
+        elif curr_mnemonic == 'resw':
+            temp_line = line.lstrip()
+            if temp_line.rstrip() == '' or len([x for x in temp_line.rstrip() if x not in '0123456789']) != 0:
+                print("Provide a number of words to reserve in line " + str(linectr))
+                sys.exit(1)
+            c = 0
+            while temp_line[c] in '0123456789':
+                c += 1
+            num = int(temp_line[:c])
+            operand1 = num
+            extra_space.append(num * 3)
+            ctr += (num * 3)
+        elif curr_mnemonic == 'start':
+            if linectr > 0:
+                for l in line_lst:
+                    if l.mnemonic or l.label:
+                        print('Start encountered after first line')
+                        sys.exit(1)
+            startRe = re.compile(r'\s*(?P<start>[a-f0-9]+)\s*', re.IGNORECASE)
+            startSearch = startRe.search(line)
+            if startSearch:
+                line = line.lstrip()
+                line = line[len(startSearch.group('start')):]
+                if not line.isspace():
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                ctr = int(startSearch.group('start').rstrip(), 16)
+                startProvided[0] = ctr
+                startProvided[1] = label_pres_case
+                if ctr > int('fffff', 16):
+                    print('Start address too large')
+                    sys.exit(1)
+                if label_search:
+                    sym_tab[label_search.group('label').lower()] = ctr
+            # else:
+            #     print('No\Invalid start address provided in line ' + str(linectr))
+            #     sys.exit(1)
+        elif curr_mnemonic == 'end':
+            endsearchre = re.compile(r'\s*(?P<end>[a-z0-9]*)\s*', re.IGNORECASE)
+            endsearch = endsearchre.search(line)
+            if endsearch:
+                line = line.lstrip()
+                line = line[len(endsearch.group('end')):]
+                if not line.isspace() and line != '':
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                operand1 = endsearch.group('end').rstrip()
+                if operand1 != '':
+                    if operand1.isalpha() and operand1.lower() not in sym_tab:
+                        print('Undefined symbol defined as entry point in end instruction: ' + operand1)
+                        sys.exit(1)
+                    if operand1.isalpha() and operand1.lower in registers:
+                        print('Can not use a register as end directive symbol')
+                        sys.exit(1)
+                    if not operand1.isnumeric() and not operand1.isalpha():
+                        hexRe = re.compile(r'(?P<hexnum>[0-9a-f]*)',re.IGNORECASE)
+                        hexsea = hexRe.search(operand1)
+                        if not hexsea:
+                            print('Provide a correct end symbol')
+                            sys.exit(1)
+                        operand1 = int(operand1, 16)
+                        # try:
+                        #     checkifhex = hex(operand1)
+                        # except TypeError:
+                        #     if operand1.lower() not in sym_tab:
+                        #         print('Provide a correct end symbol')
+                        #         sys.exit(1)
+                else:
+                    if startProvided[0]:
+                        operand1 = startProvided[0]
+            line_lst.append(Line(orig, linectr, ctr, label_, mnemonic, comment_, optype,
+                             operand1, operand2, imm, indirect, indexed, ext, based_holder[0], format_instr))
+            linectr += 1
+            return (ctr, True, linectr)
+    elif curr_mnemonic in opcode_table:
+        mnemonic_lst = opcode_table[curr_mnemonic]
+        optype = mnemonic_lst[0]
+        if mnemonic_lst[2] == '3' and ext:
+            ctr += 4
+            format_instr = 4
+        else:
+            ctr += int(mnemonic_lst[2])
+            format_instr = int(mnemonic_lst[2])
+        if mnemonic_lst[0] == 'm':
+            operandLabelRe = re.compile(r'\s*(?P<oplabelre>@*#*\s*[a-z0-9_]+\s*,*\s*x*)\s*', re.IGNORECASE)
+            oplabelsearch = operandLabelRe.search(line)
+            if oplabelsearch:
+                operand1 = oplabelsearch.group('oplabelre').lower().replace(' ', '')
+                line = line.lstrip()
+                if operand1.rstrip().isnumeric():
+                    if not line[0].isnumeric():
+                        print('Illegal instruction format: Line ' + str(linectr))
+                        sys.exit(1)
+                line = line[len(oplabelsearch.group('oplabelre')):]
+                if not line.isspace() and line != '':
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                operand1 = operand1.rstrip()
+                if ',x' in operand1:
+                    indexed = True
+                    operand1 = operand1[:-2]
+                if '@' in operand1:
+                    indirect = True
+                    operand1 = operand1[1:]
+                if '#' in operand1:
+                    imm = True
+                    operand1 = operand1[1:]
+                if '\n' in operand1:
+                    operand1 = operand1.replace('\n', '')
+                if (imm and indexed) or (indirect and indexed) or (imm and indirect):
+                    print('Can not combine adrressing modes: Line ' + str(linectr))
+                    sys.exit(1)
+                if operand1[0].isnumeric():
+                    for char in operand1[1:]:
+                        if char.lower() in 'abcdefghijklmnopqrstuvwxyz':
+                            print('Extraneous characters in line ' + str(linectr))
+                            print(orig)
+                            sys.exit(1)
+                if operand1 in registers:
+                    print('Register used where symbol expected: Line ' + str(linectr))
+                    sys.exit(1)
+                if operand1 not in sym_tab and operand1 not in symbols_undef and not operand1.isnumeric():
+                    symbols_undef.append(operand1)
+            else:
+                #raise an error
+                print('Error: Must provide a memory symbol, Line ' + str(linectr))
+                sys.exit(1)
+        elif mnemonic_lst[0] == 'r' and mnemonic_lst[1] == 2:
+            operandRegRe = re.compile(r'\s*(?P<opRegre>(a|b|x|l|pc|sw|b|s|t|f)\s*,\s*(a|b|x|l|pc|sw|b|s|t|f))\s*', re.IGNORECASE)
+            opregsearch = operandRegRe.search(line)
+            if opregsearch:
+                line = line.lstrip()
+                line = line[len(opregsearch.group('opRegre'))+1:]
+                if not line.isspace() and line != '':
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                operand = opregsearch.group('opRegre').replace(' ', '')
+                operand1, operand2 = operand.split(',')
+                operand1, operand2 = operand1.rstrip(), operand2.rstrip()
+            else:
+                print('Error: Must provide a valid register, Line ' + str(linectr))
+                sys.exit(1)
+        elif mnemonic_lst[0] == 'r1' and mnemonic_lst[1] == 1:
+            operandSingleRegRe = re.compile(r'\s*(?P<opsingleRe>(a|b|x|l|pc|sw|b|s|t|f))\s*', re.IGNORECASE)
+            opsinglesearch = operandSingleRegRe.search(line)
+            if opsinglesearch:
+                line = line.lstrip()
+                line = line[len(opsinglesearch.group('opsingleRe'))+1:]
+                if not line.isspace() and line != '':
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                operand1 = opsinglesearch.group('opsingleRe').rstrip()
+            else:
+                print('Error: Must provide a valid register, Line ' + str(linectr))
+                sys.exit(1)
+        elif mnemonic_lst[0] == 'r/n':
+            operandRegNRe = re.compile(r'\s*(?P<opRegNre>(a|b|x|l|pc|sw|b|s|t|f)\s*,\s*[0-9]+)\s*', re.IGNORECASE)
+            opregNsearch = operandRegNRe.search(line)
+            if opregNsearch:
+                line = line.lstrip()
+                line = line[len(opregNsearch.group('opRegNre'))+1:]
+                if not line.isspace() and line != '':
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                operand = opregNsearch.group('opRegNre').replace(' ', '')
+                operand1, operand2 = operand.split(',')
+                operand1, operand2 = operand1.rstrip(), operand2.rstrip()
+                if curr_mnemonic == 'shiftl' or curr_mnemonic == 'shiftr':
+                    if int(operand2) > 16 or int(operand2) < 1:
+                        print('Error: Illegal constant bigger than 16 in line ' + str(linectr))
+                        sys.exit(1)
+                elif int(operand2) > 15 or int(operand2) < 0:
+                    print('Error: Illegal constant bigger than 16 in line ' + str(linectr))
+                    sys.exit(1)
+            else:
+                print('Error: Must provide a valid register and positive number less than 16, Line ' + str(linectr))
+                sys.exit(1)
+        elif mnemonic_lst[0] == 'n':
+            operandNRe = re.compile(r'\s*(?P<opNre>[0-9]+)\s*', re.IGNORECASE)
+            opNsearch = operandNRe.search(line)
+            if opNsearch:
+                line = line.lstrip()
+                if not line[0].isnumeric():
+                    print('Illegal instruction format: Line ' + str(linectr))
+                    sys.exit(1)
+                line = line[len(opNsearch.group('opNre'))+1:]
+                if not line.isspace() and line != '':
+                    print('Extraneous characters in line ' + str(linectr))
+                    print(orig)
+                    sys.exit(1)
+                operand1 = opNsearch.group('opNre').replace(' ', '').rstrip()
+                if int(operand1) > 15 or int(operand1) < 0:
+                    print('Error: Illegal constant bigger than 16 in line ' + str(linectr))
+                    sys.exit(1)
+            else:
+                print('Error: Must provide a positive number less than 16, Line ' + str(linectr))
+                sys.exit(1)
+        elif mnemonic_lst[0] == None:
+            line = line.lstrip()
+            if not line.isspace() and line != '':
+                print('Extraneous characters in line ' + str(linectr) + ':')
+                print(orig)
+                sys.exit(1)
+               
+    else:
+        print(orig)
+        print('Invalid instruction in line ' + str(linectr))
+        sys.exit(1)
+
+    
+    # everything else at this point should be a comment
+    # fix to check for column 40
+    line = line.lstrip()
+    comment_ = line
+
+    #create a line object and append to line lst
+    line_lst.append(Line(orig, linectr, ctr, label_, mnemonic, comment_, optype,
+                             operand1, operand2, imm, indirect, indexed, ext, based_holder[0], format_instr))
+    
+    linectr += 1
+    return (ctr, False, linectr)
+
+def untabify(string):
+    c, s_lst = 0, list(string)
+    while True:
+        if c == len(s_lst):
+            return ''.join(s_lst)
+        if s_lst[c] == '\t':
+            bef, aft = s_lst[:c], s_lst[c+1:]
+            x = len(bef)
+            while x % 8 != 0:
+                x += 1
+            spaces = x - len(bef)
+            if spaces == 0:
+                spaces = 8
+            for _ in range(spaces):
+                bef.append(' ')
+            s_lst = bef + aft
+        else:
+            c += 1
+    
+
+def main():
+    ''' The main function '''
+
+# ######################################## #
+# Pass 1
+    if len(sys.argv) != 3:
+        print('Command line arguments insufficient')
+        sys.exit(1)
+
+    f = sys.argv[1]
+    if os.stat(f).st_size == 0:
+        print('0: No code or data in assembly file:')
+        sys.exit(1)
+
+    try:
+        f = open(sys.argv[1], encoding='utf-8')
+    except FileNotFoundError:
+        print('Please provide a file that exists')
+        sys.exit(1)
+    
+    locctr, linectr, endf = 0, 0, False
+    for line in f:
+        locctr, endf, linectr = parse_asm(line, locctr, linectr)
+        if endf:
+            break
+
+    if not endf:
+        print('Program did not contain an end directive')
+        sys.exit(1)
+    
+    no_code = True
+    for line in line_lst:
+        if line.mnemonic != 'start' and line.mnemonic != 'end' and line.mnemonic != 'base' and line.mnemonic != 'nobase' and line.mnemonic:
+            no_code = False
+            break
+    if no_code:
+        print('No code or data in assembly file')
+        sys.exit(1)
+
+    # Print out the symbol table
+    # lst = list(sym_tab.keys())
+    # lst.sort()
+    # print('Symbols:')
+    # for key in lst:
+    #     sym = hex(sym_tab[key])
+    #     sym = sym.replace('x','0')
+    #     if len(sym) < 6:
+    #         while len(sym) < 6:
+    #             sym = '0' + sym
+    #     elif len(sym) > 6:
+    #         while len(sym) > 6:
+    #             sym = sym[1:]
+    #     print('  ' + key.upper() + ': ' + sym.upper())
+
+# ######################################### #
+# Pass 2
+
+    for line in line_lst:
+        all_objCode.append(line.assemble())
+    machine_code = [x for x in all_objCode if x != 'Directive or comment: Ignore' and x != 'Reserve']
+    human_r = False
+
+### human-readable
+    if human_r:
+        try:
+            f = open(sys.argv[2], 'w')
+            
+        except FileNotFoundError:
+            print('File provided for object code does not exist')
+            sys.exit(1)
+        
+        # header_record
+        # prog_name = line_lst[0].label if (line_lst[0].mnemonic == 'start' and line_lst[0].label) else '      '
+        prog_name = startProvided[1][:6] if startProvided[1] else '      '
+        # if prog_name != ' ' * 6 and line_lst[0].label:
+        #     temp_line = line_lst[0].orig.lstrip()
+        #     prog_name = temp_line[:temp_line.index(':')][:6]
+
+        while len(prog_name) < 6:
+            prog_name += ' '
+        start_loc = hex(startProvided[0]) if startProvided[0] else '000000'
+        if 'x' in start_loc:
+            start_loc = start_loc[start_loc.index('x')+1:]
+            while len(start_loc) < 6:
+                start_loc = '0' + start_loc
+        master_lst.append('H')
+        master_lst.append(prog_name)
+        master_lst.append(start_loc)
+        
+        prog_size = sum(extra_space)
+        for code in machine_code:
+            prog_size += int((len(code) / 2))
+        prog_size = hex(prog_size)[hex(prog_size).index('x')+1:]
+        while len(prog_size) < 6:
+            prog_size = '0' + prog_size
+        master_lst.append(prog_size)
+        master_lst.append('\n')
+
+        # text records
+        not_done = True
+        starting_addr = None
+        a_break = False
+        col_ctr, c, line_break = 0, 0, 0
+        while not_done:
+            if c == len(all_objCode):
+                break
+            one_big_string = ''
+            if a_break:
+                a_break = False
+                one_big_string += all_objCode[c][line_break:]
+                # starting_addr = hex(line_lst[c-1].pc_ctr + line_break-1)
+                starting_addr = hex(line_lst[c-1].pc_ctr + int(line_break/2))
+                starting_addr = starting_addr[starting_addr.index('x')+1:]
+                line_break = 0
+                c += 1
+            else:
+                starting_addr = hex(line_lst[c-1].pc_ctr) if c != 0 else hex(int(start_loc, 16))
+                starting_addr = starting_addr[starting_addr.index('x')+1:]
+
+            while len(starting_addr) < 6:
+                starting_addr = '0' + starting_addr
+
+            if c == len(all_objCode) and not one_big_string:
+                break
+            elif c == len(all_objCode) and one_big_string:
+                obj_code_len = hex(int(len(one_big_string) / 2))
+                obj_code_len = obj_code_len[obj_code_len.index('x')+1:]
+                if len(obj_code_len) != 2:
+                    obj_code_len = '0' + obj_code_len
+                master_lst.append('T')
+                master_lst.append(starting_addr)
+                master_lst.append(obj_code_len)
+                master_lst.append(one_big_string.lower())
+                master_lst.append('\n')
+                break
+
+            while all_objCode[c] == 'Directive or comment: Ignore':
+                c += 1
+                if c == len(all_objCode):
+                    if one_big_string:
+                        obj_code_len = hex(int(len(one_big_string) / 2))
+                        obj_code_len = obj_code_len[obj_code_len.index('x')+1:]
+                        if len(obj_code_len) != 2:
+                            obj_code_len = '0' + obj_code_len
+                        master_lst.append('T')
+                        master_lst.append(starting_addr)
+                        master_lst.append(obj_code_len)
+                        master_lst.append(one_big_string.lower())
+                        master_lst.append('\n')
+                        not_done = False
+                    break
+            if not not_done:
+                break
+
+            while True:
+                if c == len(all_objCode):
+                    not_done = False
+                    break
+                if all_objCode[c] == 'Reserve':
+                    c += 1
+                    col_ctr = 0
+                    break
+                if all_objCode[c] != 'Directive or comment: Ignore':
+                    col_ctr += len(all_objCode[c])
+                    if col_ctr > 128:
+                        a_break = True
+                        col_ctr -= len(all_objCode[c])
+                        while col_ctr != 128:
+                            one_big_string += all_objCode[c][line_break]
+                            line_break += 1
+                            col_ctr += 1
+                        col_ctr = 0
+                        # break
+                    if a_break:
+                        break
+                    else:
+                        one_big_string += all_objCode[c]
+                        c += 1
+                else:
+                    c += 1
+            if one_big_string != '':
+                obj_code_len = hex(int(len(one_big_string) / 2))
+                obj_code_len = obj_code_len[obj_code_len.index('x')+1:]
+                if len(obj_code_len) != 2:
+                    obj_code_len = '0' + obj_code_len
+                master_lst.append('T')
+                master_lst.append(starting_addr)
+                master_lst.append(obj_code_len)
+                master_lst.append(one_big_string.lower())
+                master_lst.append('\n')
+            if not_done is False:
+                break
+
+        # end records
+        master_lst.append('E')
+        end_sym = line_lst[-1].operand1
+        if end_sym:
+            first_instr = None
+            if isinstance(end_sym, str):
+                first_instr = end_sym.lower()
+                first_instr = hex(sym_tab[first_instr])
+            else:
+                first_instr = hex(end_sym)
+            first_instr = first_instr[first_instr.index('x')+1:]
+            while len(first_instr) < 6:
+                first_instr = '0' + first_instr
+            master_lst.append(first_instr)
+        else:
+            master_lst.append('000000')
+
+        master_lst.append('\n')
+
+        # write to the file
+        all_code = ''.join(master_lst)
+        f.write(all_code)
+        f.close()
+
+    else:
+    #### not human readable
+
+        try:
+            f = open(sys.argv[2], 'w+b')
+        except FileNotFoundError:
+            print('File provided for object code does not exist')
+            sys.exit(1)
+        
+        # header_record
+        # prog_name = line_lst[0].label if (line_lst[0].mnemonic == 'start' and line_lst[0].label) else '      '
+        prog_name = startProvided[1][:6] if startProvided[1] else '      '
+        # if prog_name != ' ' * 6 and line_lst[0].label:
+        #     temp_line = line_lst[0].orig.lstrip()
+        #     prog_name = temp_line[:temp_line.index(':')][:6]
+
+        while len(prog_name) < 6:
+            prog_name += ' '
+        start_loc = hex(startProvided[0]) if startProvided[0] else '000000'
+        if 'x' in start_loc:
+            start_loc = start_loc[start_loc.index('x')+1:]
+            while len(start_loc) < 6:
+                start_loc = '0' + start_loc
+        master_lst.append(ord('H'))
+        for i in range(len(prog_name)):
+            master_lst.append(ord(prog_name[i]))
+        x = 0
+        while x < len(start_loc):
+            master_lst.append(int(start_loc[x:x+2], 16))
+            x += 2
+        
+        prog_size = sum(extra_space)
+        for code in machine_code:
+            prog_size += int((len(code) / 2))
+        prog_size = hex(prog_size)[hex(prog_size).index('x')+1:]
+        while len(prog_size) < 6:
+            prog_size = '0' + prog_size
+        x = 0
+        while x < len(prog_size):
+            master_lst.append(int(prog_size[x:x+2], 16))
+            x += 2
+        # master_lst.append(ord('\n'))
+
+        # text records
+        not_done = True
+        starting_addr = None
+        a_break = False
+        first = False
+        col_ctr, c, line_break = 0, 0, 0
+        while not_done:
+            if c == len(all_objCode):
+                break
+            one_big_string = ''
+            if a_break:
+                a_break = False
+                one_big_string += all_objCode[c][line_break:]
+                # starting_addr = hex(line_lst[c-1].pc_ctr + line_break-1)
+                starting_addr = hex(line_lst[c-1].pc_ctr + int(line_break/2))
+                starting_addr = starting_addr[starting_addr.index('x')+1:]
+                line_break = 0
+                c += 1
+            else:
+                starting_addr = hex(line_lst[c-1].pc_ctr) if c != 0 else hex(int(start_loc, 16))
+                starting_addr = starting_addr[starting_addr.index('x')+1:]
+
+            while len(starting_addr) < 6:
+                starting_addr = '0' + starting_addr
+            
+            if c == len(all_objCode) and not one_big_string:
+                break
+            elif c == len(all_objCode) and one_big_string:
+                obj_code_len = hex(int(len(one_big_string) / 2))
+                obj_code_len = obj_code_len[obj_code_len.index('x')+1:]
+                if len(obj_code_len) != 2:
+                    obj_code_len = '0' + obj_code_len
+                master_lst.append(ord('T'))
+                x = 0
+                while x < len(starting_addr):
+                    master_lst.append(int(starting_addr[x:x+2],16))
+                    x += 2
+                master_lst.append(int(obj_code_len, 16))
+                x = 0
+                while x < len(one_big_string):
+                    master_lst.append(int(one_big_string[x:x+2],16))
+                    x += 2
+                break
+
+            while all_objCode[c] == 'Directive or comment: Ignore':
+                c += 1
+                if c == len(all_objCode):
+                    if one_big_string:
+                        obj_code_len = hex(int(len(one_big_string) / 2))
+                        obj_code_len = obj_code_len[obj_code_len.index('x')+1:]
+                        if len(obj_code_len) != 2:
+                            obj_code_len = '0' + obj_code_len
+                        master_lst.append(ord('T'))
+                        x = 0
+                        while x < len(starting_addr):
+                            master_lst.append(int(starting_addr[x:x+2],16))
+                            x += 2
+                        master_lst.append(int(obj_code_len, 16))
+                        x = 0
+                        while x < len(one_big_string):
+                            master_lst.append(int(one_big_string[x:x+2],16))
+                            x += 2
+                    not_done = False
+                    break
+            if not not_done:
+                break
+
+            while True:
+                if c == len(all_objCode):
+                    not_done = False
+                    break
+                if all_objCode[c] == 'Reserve':
+                    c += 1
+                    col_ctr = 0
+                    break
+                if all_objCode[c] != 'Directive or comment: Ignore':
+                    col_ctr += len(all_objCode[c])
+                    if col_ctr > 128:
+                        a_break = True
+                        col_ctr -= len(all_objCode[c])
+                        while col_ctr != 128:
+                            one_big_string += all_objCode[c][line_break]
+                            line_break += 1
+                            col_ctr += 1
+                        col_ctr = 0
+                        # break
+                    if a_break:
+                        break
+                    else:
+                        one_big_string += all_objCode[c]
+                        c += 1
+                else:
+                    c += 1
+            if one_big_string != '':
+                obj_code_len = hex(int(len(one_big_string) / 2))
+                obj_code_len = obj_code_len[obj_code_len.index('x')+1:]
+                if len(obj_code_len) != 2:
+                    obj_code_len = '0' + obj_code_len
+                master_lst.append(ord('T'))
+                x = 0
+                while x < len(starting_addr):
+                    master_lst.append(int(starting_addr[x:x+2],16))
+                    x += 2
+                master_lst.append(int(obj_code_len, 16))
+                x = 0
+                while x < len(one_big_string):
+                    master_lst.append(int(one_big_string[x:x+2],16))
+                    x += 2
+                # master_lst.append(ord('\n'))
+            if not_done is False:
+                break
+
+        # end records
+        master_lst.append(ord('E'))
+        end_sym = line_lst[-1].operand1
+        if end_sym:
+            first_instr = None
+            if isinstance(end_sym, str):
+                first_instr = end_sym.lower()
+                first_instr = hex(sym_tab[first_instr])
+            else:
+                first_instr = hex(end_sym)
+            first_instr = first_instr[first_instr.index('x')+1:]
+            while len(first_instr) < 6:
+                first_instr = '0' + first_instr
+            x = 0
+            while x < len(first_instr):
+                master_lst.append(int(first_instr[x:x+2], 16))
+                x += 2
+        else:
+            x = 0
+            while x < 3:
+                master_lst.append(0)
+                x += 1
+
+        # master_lst.append(ord('\n'))
+
+        # write to the file
+        all_code = bytearray(master_lst)
+        f.write(all_code)
+        f.close()
+
+
+
+if __name__ == "__main__":
+    main()

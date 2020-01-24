@@ -1,0 +1,82 @@
+. This is a (bad) program
+Hello:  START 1000
+BEGIN:
+  add 1000
+  ADDF 1000
+  ADDR A, X
+  AND data
+  CLEAR A
+  COMP data
+  COMPF DATA
+  COMPR A, X
+  +DIV DATA
+  DIVF BEGIN
+  DIVR B, T
+  FIX
+  FLOAT
+  HIO
+  BASE 1000
+  J BEGIN
+  JEQ BEGIN
+  JGT 1000
+  JLT #1000
+  NOBASE
+  JSUB data
+  LDA data
+  LDB data
+  LDCH BEGIN
+  LDF flt
+  LDL @1000
+  +LDS 1000, X
+  LDT 1000
+  LDX 10000
+  LPS 10000
+  MUL data
+  MULF FLT
+  MULR A, B                             wdwdwdwd
+  NORM
+. wfbweofbgweobgweoubgweougboegio
+  OR Data
+  RD flt
+  RMO B, L
+  SHIFTL A, 4
+  SHIFTR PC, 16
+  SIO
+  SSK begin
+  STA data
+  STB #1000
+  STCH @1000
+  STF DATA
+  STI #500
+  STL flt
+  STS flt
+  STSW flt
+  STT data
+  STX DATA
+  +SUB data
+  SUBF flt
+  SUBR PC, SW
+  SVC 12
+  SVC 1
+  TD 2000
+  TIO
+  TIX data
+  TIXR A
+  WD data
+  RSUB
+data: WORD 10000                        wdwdwdwd
+flt: WORD 10000
+     WORD 10000
+     RESB 10
+     RESW 10
+     BYTE 10
+     BYTE -100
+     BYTE x'10FFFFFFFFFFFFFFFFFFF'
+thing:
+     BYTE c' !"#$%&()*+,-./0123456789:;'
+     BYTE c'<=>?@ABCDEFGHIJKLMNOPQRSTUV'
+     BYTE c'WXYZ[]\^_`abcdefghijklmnop'
+     BYTE c'qrstuvwxyz{|}~'''
+end:
+  END begin
+wdbuwbfuifbiufbiqufbiqwbfiqbwfiqwbfiuwquifbquifuiqbfiqwbfbiu

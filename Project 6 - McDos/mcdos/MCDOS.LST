@@ -1,0 +1,1362 @@
+Microsoft (R) Macro Assembler Version 6.11		    10/31/19 21:55:12
+mcdos.asm						     Page 1 - 1
+
+
+				.model tiny,stdcall
+				.8086
+				.stack 200h
+
+ 0000				.code
+					ORG	100h
+ 0100				start:
+ 0100  E9 23FA				jmp	setup
+
+ = 000A				num_bytes = 10d
+
+ 0103 30 31 32 33 34 35		chars BYTE '0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'
+       36 37 38 39 41 42
+       43 44 45 46
+
+ 0113  0400 [			int9Stack WORD 400h DUP(?)
+        0000
+       ]
+ 0913				int9label LABEL WORD
+ 0913 0000			oldSPint9 WORD ?
+ 0915 0000			oldSSint9 WORD ?
+ 0917 0000			tempDxHolder WORD ?
+
+ 0919  0400 [			int16stack WORD 400h DUP(?)
+        0000
+       ]
+ 1119				int16label LABEL WORD
+ 1119 0000			oldSPint16 WORD ?
+ 111B 0000			oldSSint16 WORD ?
+ 111D 0000			tmpDxHolder WORD ?
+
+ = 0000				r_shift = 00				;1st bit
+ = 0001				l_shift = 01				;2nd bit
+
+ = 0021				DOS		= 21h
+ = 0010				BIOS		= 10h
+ = 4C00				TERMINATE	= 4C00h
+					
+ = 0000				NUL	= 0
+ = 000A				LF	= 10
+ = 000D				CR	= 13
+
+ 111F 63 3A 5C 6D 61 63		MacroFileName	BYTE "c:\macros.dat", NUL
+       72 6F 73 2E 64 61
+       74 00
+
+ 112D 4C 6F 61 64 20 65		AskUser BYTE "Load earlier saved macros? Press 'y' if so:  ",0
+       61 72 6C 69 65 72
+       20 73 61 76 65 64
+       20 6D 61 63 72 6F
+       73 3F 20 50 72 65
+       73 73 20 27 79 27
+       20 69 66 20 73 6F
+       3A 20 20 00
+
+ 115B 1E61 3062 2E63 2064	actualascii WORD 1E61h,3062h,2e63h,2064h,1265h,2166h,2267h,2368h,1769h,246ah,
+       1265 2166 2267
+       2368 1769 246A
+       256B 266C 326D
+       316E 186F 1970
+       1071 1372 1F73
+       1474 1675 2F76
+       1177 2D78 1579
+       2C7A
+						 256bh,266ch,326dh,316eh,186fh,1970h,1071h,1372h,1f73h,1474h,
+						 1675h,2f76h,1177h,2d78h,1579h,2c7ah
+
+ 118F 0000			filehandle WORD ?
+
+ 1191 0000			tempMacroptr WORD 0			;pointer to point where in array we are
+ 1193  0200 [			tempMacroArray WORD 512 DUP(?)		;to move into during macro assignment
+        0000
+       ]
+
+ 1593 0000			MacroDBptr WORD 0 			;pointer to use for macroDB lookup
+ 1595  0096 [			MacroDB WORD 150 DUP(?)			;triple word macro database
+        0000
+       ]
+
+ 16C1 0000			allMacrosPtr WORD 0
+ 16C3  0280 [			allMacros WORD 640 DUP(?)		;all macros got during user interaction
+        0000
+       ]
+
+ 1BC3 0000			readmacrosstatus WORD 0
+
+ 1BC5 0000			mybufferptr WORD 0
+ 1BC7 0000			readthebuffer WORD 0
+ 1BC9  0100 [			mybuffer WORD 256 DUP(?)
+        0000
+       ]
+
+ 1DC9 00			int9status BYTE ?			;0-normal,1-assign,2-sthfun
+ 1DCA 00			int16status BYTE ? 			;0-normal,1-readfromsecretbuffer
+
+ 1DCB 20 2D 20 54 6F 20		InfoMsg BYTE " - To begin macro assignment:hit the r-shift. ",0dh,0ah
+       62 65 67 69 6E 20
+       6D 61 63 72 6F 20
+       61 73 73 69 67 6E
+       6D 65 6E 74 3A 68
+       69 74 20 74 68 65
+       20 72 2D 73 68 69
+       66 74 2E 20 0D 0A
+ 1DFB 20 2D 20 49 66 20		FollowMsg BYTE " - If at any time you wish to disable macros, press 1.",0dh,0ah
+       61 74 20 61 6E 79
+       20 74 69 6D 65 20
+       79 6F 75 20 77 69
+       73 68 20 74 6F 20
+       64 69 73 61 62 6C
+       65 20 6D 61 63 72
+       6F 73 2C 20 70 72
+       65 73 73 20 31 2E
+       0D 0A
+ 1E33 20 2D 20 49 66 20		OptionsMsg BYTE " - If you wish to do something fun, press 2",0dh,0ah
+       79 6F 75 20 77 69
+       73 68 20 74 6F 20
+       64 6F 20 73 6F 6D
+       65 74 68 69 6E 67
+       20 66 75 6E 2C 20
+       70 72 65 73 73 20
+       32 0D 0A
+ 1E60 20 2D 20 54 6F 20		NoFunMsg BYTE " - To stop doing something fun, press 3",0dh,0ah
+       73 74 6F 70 20 64
+       6F 69 6E 67 20 73
+       6F 6D 65 74 68 69
+       6E 67 20 66 75 6E
+       2C 20 70 72 65 73
+       73 20 33 0D 0A
+ 1E89 20 2D 20 54 6F 20		Uninstall BYTE " - To uninstall, run mcdos once more.",0dh,0ah,
+       75 6E 69 6E 73 74
+       61 6C 6C 2C 20 72
+       75 6E 20 6D 63 64
+       6F 73 20 6F 6E 63
+       65 20 6D 6F 72 65
+       2E 0D 0A
+
+ 1EB0 54 6F 20 62 69 6E		HowMsg BYTE "To bind a macro, enter letter being bound to: ",0dh,0ah
+       64 20 61 20 6D 61
+       63 72 6F 2C 20 65
+       6E 74 65 72 20 6C
+       65 74 74 65 72 20
+       62 65 69 6E 67 20
+       62 6F 75 6E 64 20
+       74 6F 3A 20 0D 0A
+ 1EE0 46 6F 6C 6C 6F 77		How2Msg BYTE "Followed by a space:",0dh,0ah
+       65 64 20 62 79 20
+       61 20 73 70 61 63
+       65 3A 0D 0A
+ 1EF6 54 68 65 6E 20 74		How3Msg BYTE "Then the letters you are binding to: ",0dh,0ah
+       68 65 20 6C 65 74
+       74 65 72 73 20 79
+       6F 75 20 61 72 65
+       20 62 69 6E 64 69
+       6E 67 20 74 6F 3A
+       20 0D 0A
+ 1F1D 4F 6E 63 65 20 79		How4Msg BYTE "Once you are done, hit the l-shift!",0dh,0ah,0dh,0ah
+       6F 75 20 61 72 65
+       20 64 6F 6E 65 2C
+       20 68 69 74 20 74
+       68 65 20 6C 2D 73
+       68 69 66 74 21 0D
+       0A 0D 0A
+ 1F44 52 45 4D 45 4D 42		How5Msg	BYTE "REMEMBER: ONCE DONE WITH ASSIGNMENT OF MACROS",0dh,0ah
+       45 52 3A 20 4F 4E
+       43 45 20 44 4F 4E
+       45 20 57 49 54 48
+       20 41 53 53 49 47
+       4E 4D 45 4E 54 20
+       4F 46 20 4D 41 43
+       52 4F 53 0D 0A
+ 1F73 20 2D 20 49 66 20		FollowupMsg BYTE " - If you wish to disable all the macros, press 1.",0dh,0ah
+       79 6F 75 20 77 69
+       73 68 20 74 6F 20
+       64 69 73 61 62 6C
+       65 20 61 6C 6C 20
+       74 68 65 20 6D 61
+       63 72 6F 73 2C 20
+       70 72 65 73 73 20
+       31 2E 0D 0A
+ 1FA7 20 2D 20 49 66 20		EnableMsg BYTE " - If you wish to re-enable them, press 0.",0dh,0ah
+       79 6F 75 20 77 69
+       73 68 20 74 6F 20
+       72 65 2D 65 6E 61
+       62 6C 65 20 74 68
+       65 6D 2C 20 70 72
+       65 73 73 20 30 2E
+       0D 0A
+ 1FD3 20 2D 20 49 66 20		OptionsupMsg BYTE " - If you wish to do something fun, press 2",0dh,0ah
+       79 6F 75 20 77 69
+       73 68 20 74 6F 20
+       64 6F 20 73 6F 6D
+       65 74 68 69 6E 67
+       20 66 75 6E 2C 20
+       70 72 65 73 73 20
+       32 0D 0A
+ 2000 20 2D 20 54 6F 20		NoFunupMsg BYTE " - To stop doing something fun, press 3",0dh,0ah,0
+       73 74 6F 70 20 64
+       6F 69 6E 67 20 73
+       6F 6D 65 74 68 69
+       6E 67 20 66 75 6E
+       2C 20 70 72 65 73
+       73 20 33 0D 0A 00
+
+ 202A  001E [			overflowbuff BYTE 30 DUP(?)
+        00
+       ]
+
+ 2048				int9handler PROC
+ 2048  FA				cli
+					
+ 2049  2E: 89 26 0913 R			mov	cs:[oldSPint9], sp
+ 204E  2E: 8C 16 0915 R			mov	cs:[oldSSint9], ss
+ 2053  2E: 89 16 0917 R			mov	cs:[tempDxHolder], dx
+ 2058  BC 0913 R			mov	sp, OFFSET cs:[int9label]
+ 205B  8C CA				mov	dx, cs
+ 205D  8E D2				mov	ss, dx
+ 205F  2E: 8B 16 0917 R			mov	dx, cs:[tempDxHolder]
+
+ 2064  9C				pushf
+ 2065  52				push	dx
+
+ 2066  2E: 8A 16 1DC9 R			mov	dl, cs:int9status	
+ 206B  80 FA 01				cmp	dl, 1d
+ 206E  75 03 E9 00A4			je	cs:[assignment]
+
+ 2073  80 FA 02				cmp	dl, 2d
+ 2076  74 05				je	cs:[sthfunbranch]
+
+ 2078  5A				pop	dx
+ 2079  9D				popf
+ 207A  E9 0183				jmp	cs:[checkforRshift]
+
+ 207D				sthfunbranch:
+ 207D  5A				pop	dx
+
+ 207E  9C				pushf
+ 207F  2E: FF 1E 2382 R			call	cs:[old_interrupt9]
+ 2084  FA				cli
+
+ 2085  9C				pushf
+ 2086  56				push	si
+ 2087  06				push	es
+ 2088  52				push	dx
+ 2089  51				push	cx
+ 208A  53				push	bx
+ 208B  50				push	ax
+
+ 208C  BB 0040				mov	bx, 40h
+ 208F  8E C3				mov	es, bx
+ 2091  26: 8B 1E 001C			mov	bx, es:[1ch]
+ 2096  83 EB 02				sub	bx, 02h
+ 2099  83 FB 1E				cmp	bx, 1eh
+ 209C  73 03				jae	cs:[bxisnormalfun]
+ 209E  BB 003C				mov	bx, 3ch
+ 20A1				bxisnormalfun:
+ 20A1  26: 8B 07			mov	ax, es:[bx]
+
+ 20A4  2E: 8B 0E 1BC3 R			mov	cx, cs:readmacrosstatus
+ 20A9  83 F9 01				cmp	cx, 01
+ 20AC  74 39				je	cs:[checkifenablefun]
+ 20AE  3D 0231				cmp	ax, 0231h
+ 20B1  74 52				je	cs:[disablemacrofun]
+ 20B3  3D 0433				cmp	ax, 0433h
+ 20B6  74 3E				je	cs:[stophavingfun]
+					
+ 20B8  3C 61				cmp	al, 61h
+ 20BA  72 51				jb	cs:[restorefunregs]
+ 20BC  3C 7A				cmp	al, 7ah
+ 20BE  77 4D				ja	cs:[restorefunregs]
+ 20C0  53				push	bx
+
+ 20C1  B4 00				mov	ah, 00h
+ 20C3  FB				sti
+ 20C4  CD 1A				int	1Ah
+ 20C6  FA				cli
+ 20C7  B4 00				mov	ah, 00h
+ 20C9  8A C2				mov	al, dl
+ 20CB  B3 1A				mov	bl, 26d
+ 20CD  F6 F3				div	bl
+ 20CF  24 00				and	al, 00
+ 20D1  B1 08				mov	cl, 8
+ 20D3  D3 E8				shr	ax, cl
+ 20D5  8B F0				mov	si, ax
+ 20D7  03 F0				add	si, ax
+
+				;	pop	bx
+ 20D9  BB 115B R			mov	bx, offset cs:actualascii
+ 20DC  03 DE				add	bx, si
+ 20DE  2E: 8B 07			mov	ax, cs:[bx]
+
+ 20E1  5B				pop	bx
+					
+ 20E2  26: 89 07			mov	es:[bx], ax
+ 20E5  EB 26				jmp	cs:[restorefunregs]
+
+ 20E7				checkifenablefun:
+ 20E7  3D 0B30				cmp	ax, 0b30h
+ 20EA  75 21				jne	cs:[restorefunregs]
+ 20EC  B9 0000				mov	cx, 00h
+ 20EF  2E: 89 0E 1BC3 R			mov	cs:readmacrosstatus, cx
+ 20F4  EB 17				jmp	cs:[restorefunregs]
+
+ 20F6				stophavingfun:
+ 20F6  BA 0000				mov	dx, 00
+ 20F9  2E: 88 16 1DC9 R			mov	cs:int9status, dl
+ 20FE  2E: 89 16 1BC3 R			mov	cs:readmacrosstatus, dx
+ 2103  EB 08				jmp	cs:[restorefunregs]
+
+ 2105				disablemacrofun:
+ 2105  B9 0001				mov	cx, 01h
+ 2108  2E: 89 0E 1BC3 R			mov	cs:readmacrosstatus, cx
+
+ 210D				restorefunregs:
+ 210D  58				pop	ax
+ 210E  5B				pop	bx
+ 210F  59				pop	cx
+ 2110  5A				pop	dx
+ 2111  07				pop	es
+ 2112  5E				pop	si
+ 2113  9D				popf
+
+ 2114  E9 0088				jmp	cs:[interm1]
+
+ 2117				assignment:
+ 2117  5A				pop	dx
+ 2118  9D				popf
+
+ 2119  9C				pushf
+ 211A  56				push	si
+ 211B  06				push	es
+ 211C  52				push	dx
+ 211D  57				push	di
+ 211E  51				push	cx
+ 211F  55				push	bp
+ 2120  53				push	bx
+ 2121  50				push	ax
+
+ 2122  B9 0040				mov	cx, 40h
+ 2125  8E C1				mov	es, cx
+ 2127  26: A0 0017			mov	al, es:[17h]
+ 212B  24 02				and	al, 02h
+ 212D  B1 01				mov	cl, 01
+ 212F  D2 E8				shr	al, cl
+ 2131  3C 01				cmp	al, 1
+				;	jne	cs:[storekeys]
+ 2133  75 7B				jne	cs:[checkkybdportlshift]
+
+				;	mov	al, '1'
+				;	sti
+				;	call	cs:[biosoutputchar]
+				;	cli
+
+ 2135  B2 00				mov	dl, 00
+ 2137  2E: 88 16 1DC9 R			mov	cs:int9status, dl
+						
+ 213C  BB 1193 R			mov	bx, offset cs:tempMacroArray
+ 213F  BF 1595 R			mov	di, offset cs:MacroDB
+ 2142  BE 16C3 R			mov	si, offset cs:allMacros
+
+					;update the macroDB
+ 2145  2E: 8B 0E 1191 R			mov	cx, cs:tempMacroptr
+ 214A  83 E9 02				sub	cx, 02h					;skip first word
+ 214D  83 C3 02				add	bx, 02h					;skip first word
+					
+ 2150  2E: 8B 16 1593 R			mov	dx, cs:MacroDBptr
+ 2155  03 FA				add	di, dx					;update starting offset
+ 2157  2E: 8B 2F			mov	bp, cs:[bx]				;current word
+ 215A  2E: 89 2D			mov	cs:[di], bp				;scan code, ascii code
+ 215D  83 C2 06				add	dx, 06h
+ 2160  2E: 89 16 1593 R			mov	cs:MacroDBptr, dx			;update macroDB ptr
+
+ 2165  2E: 8B 16 16C1 R			mov	dx, cs:allMacrosptr
+ 216A  03 F2				add	si, dx
+ 216C  83 C7 02				add	di, 02h					;move to next word
+ 216F  2E: 89 35			mov	cs:[di], si				;MacroDb start offset
+ 2172  56				push	si
+ 2173  03 F1				add	si, cx
+ 2175  83 C7 02				add	di, 02h
+ 2178  2E: 89 35			mov	cs:[di], si				;MacroDB end offset
+ 217B  5E				pop	si
+ 217C  03 D1				add	dx, cx					;update all macros ptr
+ 217E  2E: 89 16 16C1 R			mov	cs:allMacrosptr, dx
+
+					;store macro in memory, start at cs:[si], stop at cs:[si+cx]
+ 2183  83 C3 04				add	bx, 04h
+ 2186  83 E9 04				sub	cx, 04h
+
+ 2189				movingtoallmacros:
+ 2189  83 F9 00				cmp	cx, 00h
+ 218C  74 13				je	cs:[settempptr]
+
+ 218E  2E: 8B 07			mov	ax, cs:[bx]
+ 2191  2E: 89 04			mov	cs:[si], ax
+ 2194  83 C6 02				add	si, 02h
+ 2197  83 C3 02				add	bx, 02h
+ 219A  83 E9 02				sub	cx, 02h
+ 219D  EB EA				jmp	cs:[movingtoallmacros]	
+
+ 219F				interm1:
+ 219F  EB 5D				jmp	cs:[interm2]
+					 	
+ 21A1				settempptr:
+ 21A1  2E: 89 0E 1191 R			mov	cs:tempMacroptr, cx			;set temp ptr to zero
+
+ 21A6  B4 05				mov	ah, 05h
+ 21A8  B0 00				mov	al, 00h
+ 21AA  FB				sti
+ 21AB  CD 10				int	16
+ 21AD  FA				cli
+
+ 21AE  EB 42				jmp	cs:[restorelshiftregs]
+
+
+ 21B0				checkkybdportlshift:
+ 21B0  E4 60				in	al, 60h
+ 21B2  24 80				and	al, 80h
+ 21B4  3C 80				cmp	al, 80h
+ 21B6  75 12				jne	cs:[storekeys]
+					
+ 21B8  58				pop	ax
+ 21B9  5B				pop	bx
+ 21BA  5D				pop	bp
+ 21BB  59				pop	cx
+ 21BC  5F				pop	di
+ 21BD  5A				pop	dx
+ 21BE  07				pop	es
+ 21BF  5E				pop	si
+ 21C0  9D				popf
+
+ 21C1  9C				pushf
+ 21C2  2E: FF 1E 2382 R			call	cs:[old_interrupt9]
+ 21C7  E9 01AC				jmp	cs:[bottomint9]
+
+ 21CA				storekeys:
+ 21CA  26: 8B 1E 001C			mov	bx, es:[1ch]
+ 21CF  83 EB 02				sub 	bx, 02h
+ 21D2  83 FB 1E				cmp	bx, 1eh
+ 21D5  73 03				jae	cs:[bxisnormal]
+ 21D7  BB 003C				mov	bx, 3ch
+ 21DA				bxisnormal:
+ 21DA  BE 1193 R			mov	si, offset cs:tempMacroArray
+ 21DD  2E: 8B 16 1191 R			mov	dx, cs:tempMacroptr
+ 21E2  03 F2				add	si, dx
+ 21E4  26: 8B 07			mov	ax, es:[bx]
+ 21E7  2E: 89 04			mov	cs:[si], ax
+ 21EA  83 C2 02				add	dx, 02h
+ 21ED  2E: 89 16 1191 R			mov	cs:tempMacroptr, dx
+
+ 21F2				restorelshiftregs:
+ 21F2  58				pop	ax
+ 21F3  5B				pop	bx
+ 21F4  5D				pop	bp
+ 21F5  59				pop	cx
+ 21F6  5F				pop	di
+ 21F7  5A				pop	dx
+ 21F8  07				pop	es
+ 21F9  5E				pop	si
+ 21FA  9D				popf
+
+ 21FB  E9 00A4				jmp	cs:[normalInt]
+
+ 21FE				interm2:
+ 21FE  EB 3A				jmp	cs:[interm3]
+
+ 2200				checkforRshift:
+ 2200  9C				pushf
+ 2201  56				push	si
+ 2202  06				push	es
+ 2203  57				push	di
+ 2204  52				push	dx
+ 2205  51				push	cx
+ 2206  53				push	bx
+ 2207  50				push	ax
+
+ 2208  B9 0040				mov	cx, 40h
+ 220B  8E C1				mov	es, cx
+ 220D  26: A0 0017			mov	al, es:[17h]
+ 2211  24 01				and	al, 01h
+ 2213  3C 01				cmp	al, 1h
+ 2215  75 6D				jne	cs:[restoreregs]
+
+				;	mov	al, '0'
+				;	sti
+				;	call	cs:[BiosOutputChar]
+				;	cli
+
+ 2217  B4 05				mov	ah, 05h
+ 2219  B0 05				mov	al, 05h
+ 221B  FB				sti
+ 221C  CD 10				int	16
+ 221E  FA				cli
+
+ 221F  B9 001E				mov	cx, 30d
+
+ 2222				outputnewline:
+ 2222  83 F9 00				cmp	cx, 00
+ 2225  74 15				je	cs:[donewithnewl]
+					
+ 2227  B0 0D				mov	al, 0dh
+ 2229  B4 0E				mov	ah, 0eh
+ 222B  FB				sti
+ 222C  CD 10				int	16
+ 222E  FA				cli
+ 222F  B0 0A				mov	al, 0ah
+ 2231  B4 0E				mov	ah, 0eh
+ 2233  FB				sti
+ 2234  CD 10				int	16
+ 2236  FA				cli
+ 2237  49				dec	cx
+ 2238  EB E8				jmp	cs:[outputnewline]
+
+ 223A				interm3:
+ 223A  EB 63				jmp	cs:[interm4]
+
+ 223C				donewithnewl:
+ 223C  BA 0000				mov	dx, 0
+ 223F  B4 02				mov	ah, 02h
+ 2241  B7 05				mov	bh, 05h
+ 2243  FB				sti
+ 2244  CD 10				int	16
+ 2246  FA				cli
+
+ 2247  BE 1EB0 R			mov	si, offset cs:HowMsg
+ 224A  B9 0177				mov	cx, 177h
+
+ 224D				l2:
+ 224D  83 F9 00				cmp	cx, 00
+ 2250  74 0B				je	cs:[newl2]
+
+ 2252  2E: 8A 04			mov	al, cs:[si]
+ 2255  B4 0E				mov	ah, 0eh
+ 2257  CD 10				int	16
+ 2259  46				inc	si
+ 225A  49				dec	cx
+ 225B  EB F0				jmp	cs:[l2]
+
+ 225D				newl2:
+ 225D  B0 0D				mov	al, 0dh
+ 225F  FB				sti
+ 2260  0E E8 01C2			call	cs:[biosoutputchar]
+ 2264  FA				cli
+ 2265  B0 0A				mov	al, 0ah
+ 2267  FB				sti
+ 2268  0E E8 01BA			call	cs:[biosoutputchar]
+ 226C  FA				cli
+ 226D  B0 0D				mov	al, 0dh
+ 226F  FB				sti
+ 2270  0E E8 01B2			call	cs:[biosoutputchar]
+ 2274  FA				cli
+ 2275  B0 0A				mov	al, 0ah
+ 2277  FB				sti
+ 2278  0E E8 01AA			call	cs:[biosoutputchar]
+ 227C  FA				cli
+
+ 227D  B2 01				mov	dl, 1d
+ 227F  2E: 88 16 1DC9 R			mov	cs:int9status, dl
+
+ 2284				restoreregs:
+ 2284  58				pop	ax
+ 2285  5B				pop	bx
+ 2286  59				pop	cx
+ 2287  5A				pop	dx
+ 2288  5F				pop	di
+ 2289  07				pop	es
+ 228A  5E				pop	si
+ 228B  9D				popf
+
+ 228C				checkkybdport:
+ 228C  50				push	ax
+ 228D  E4 60				in	al, 60h
+ 228F  24 80				and	al, 80h
+ 2291  3C 80				cmp	al, 80h
+ 2293  75 0C				jne	cs:[restoremyax]
+ 2295  58				pop	ax
+ 2296  9C				pushf
+ 2297  2E: FF 1E 2382 R			call	cs:[old_interrupt9]
+ 229C  E9 00D7				jmp	cs:[bottomint9]
+
+ 229F				interm4:
+ 229F  EB 68				jmp	cs:[interm5]
+
+ 22A1				restoremyax:
+ 22A1  58				pop	ax
+
+
+ 22A2				normalInt:
+ 22A2  9C				pushf
+ 22A3  2E: FF 1E 2382 R			call	cs:[old_interrupt9]
+ 22A8  FA				cli
+
+					;macro look up
+ 22A9  9C				pushf
+ 22AA  56				push	si
+ 22AB  06				push	es
+ 22AC  52				push	dx
+ 22AD  57				push	di
+ 22AE  51				push	cx
+ 22AF  53				push	bx
+ 22B0  50				push	ax
+
+ 22B1  2E: A0 1DC9 R			mov	al, cs:int9status
+ 22B5  3C 00				cmp	al, 00h
+ 22B7  74 03 E9 00B2			jne	cs:[macrorestoreregs]
+
+ 22BC  B9 0040				mov	cx, 40h
+ 22BF  8E C1				mov	es, cx
+ 22C1  26: 8B 1E 001C			mov	bx, es:[1ch]
+ 22C6  83 EB 02				sub	bx, 02h
+ 22C9  83 FB 1E				cmp	bx, 1eh
+ 22CC  73 03				jae	cs:[bxtooisnormal]
+ 22CE  BB 003C				mov	bx, 3ch
+ 22D1				bxtooisnormal:
+ 22D1  26: 8B 07			mov	ax, es:[bx]				;last key typed
+ 22D4  2E: 8B 1E 1BC3 R			mov	bx, cs:readmacrosstatus
+
+ 22D9  83 FB 01				cmp	bx, 01h
+ 22DC  74 24				je	cs:[checkifenable]
+ 22DE  3D 0231				cmp	ax, 0231h
+ 22E1  74 42				je	cs:[disablemacros]
+ 22E3  3D 0332				cmp	ax, 0332h				;display all macros
+ 22E6  74 23				je	cs:[dosthfun]
+					
+					;look up key in ax in macrodb
+ 22E8  2E: 8B 0E 1593 R			mov	cx, cs:MacroDBptr
+ 22ED  BE 1595 R			mov	si, offset cs:MacroDB
+
+ 22F0				macrolookup:
+ 22F0  83 F9 00				cmp	cx, 00
+ 22F3  74 79				je	cs:[macrorestoreregs]
+
+ 22F5  2E: 3B 04			cmp	ax, cs:[si]
+ 22F8  74 34				je	cs:[keyfoundindb]
+ 22FA  83 C6 06				add	si, 06h
+ 22FD  83 E9 06				sub	cx, 06h
+ 2300  EB EE				jmp	cs:[macrolookup]
+
+ 2302				checkifenable:
+ 2302  3D 0B30				cmp	ax, 0b30h
+ 2305  74 15				je	cs:[enablemacros]
+ 2307  EB 65				jmp	cs:[macrorestoreregs]
+
+ 2309				interm5:
+ 2309  EB 6B				jmp	cs:[bottomint9]
+
+ 230B				dosthfun:
+ 230B  B2 02				mov	dl, 02
+ 230D  2E: 88 16 1DC9 R			mov	cs:int9status, dl
+ 2312  BA 0000				mov	dx, 00
+ 2315  2E: 89 16 1BC3 R			mov	cs:readmacrosstatus, dx
+ 231A  EB 52				jmp	cs:[macrorestoreregs]
+
+ 231C				enablemacros:
+ 231C  B8 0000				mov	ax, 00h
+ 231F  2E: A3 1BC3 R			mov	cs:readmacrosstatus, ax
+ 2323  EB 49				jmp	cs:[macrorestoreregs]
+
+ 2325				disablemacros:
+ 2325  B8 0001				mov	ax, 01h
+ 2328  2E: A3 1BC3 R			mov	cs:readmacrosstatus, ax
+ 232C  EB 40				jmp	cs:[macrorestoreregs]
+
+ 232E				keyfoundindb:
+ 232E  2E: 8B 7C 02			mov	di, cs:[si+2]			;di has start offset
+ 2332  2E: 8B 4C 04			mov	cx, cs:[si+4]
+ 2336  2B CF				sub	cx, di				;length of macro
+ 2338  2E: 89 0E 1BC5 R			mov	cs:mybufferptr, cx		;update buffer ptr
+
+ 233D  BE 0040				mov	si, 40h
+ 2340  8E C6				mov	es, si
+ 2342  26: 8B 36 001C			mov	si, es:[1ch]
+ 2347  83 EE 02				sub	si, 02h
+ 234A  83 FE 1E				cmp	si, 1eh
+ 234D  73 03				jae	cs:[siisnormal]
+ 234F  BE 003C				mov	si, 3ch
+ 2352				siisnormal:
+ 2352  26: 89 36 001C			mov	es:[1ch], si
+
+ 2357  BE 0000				mov	si, 00
+
+ 235A				puttingstuff:
+ 235A  3B F1				cmp	si, cx
+ 235C  74 10				je	cs:[macrorestoreregs]
+
+ 235E  2E: 8B 05			mov	ax, cs:[di]
+ 2361  2E: 89 84 1BC9 R			mov	cs:mybuffer[si], ax
+ 2366  83 C6 02				add	si, 02h
+ 2369  83 C7 02				add	di, 02h
+ 236C  EB EC				jmp	cs:[puttingstuff]	
+					
+ 236E				macrorestoreregs:
+ 236E  58				pop	ax
+ 236F  5B				pop	bx
+ 2370  59				pop	cx
+ 2371  5F				pop	di
+ 2372  5A				pop	dx
+ 2373  07				pop	es
+ 2374  5E				pop	si
+ 2375  9D				popf
+
+ 2376				bottomint9:
+ 2376  2E: 8E 16 0915 R			mov	ss, cs:[oldSSint9]
+ 237B  2E: 8B 26 0913 R			mov	sp, cs:[oldSPint9]
+
+ 2380  FB				sti
+ 2381  CF				iret
+
+ 2382 00000000			old_interrupt9 DWORD ?
+
+ 2386				int9handler ENDP
+
+				;-------------------------------------------
+ 2386				int16handler PROC
+ 2386  FA				cli
+
+ 2387  2E: 89 26 1119 R			mov	cs:[oldSPint16], sp
+ 238C  2E: 8C 16 111B R			mov	cs:[oldSSint16], ss
+ 2391  2E: 89 16 111D R			mov	cs:[tmpDxHolder], dx
+ 2396  BC 1119 R			mov	sp, OFFSET cs:[int16label]
+ 2399  8C CA				mov	dx, cs
+ 239B  8E D2				mov	ss, dx
+ 239D  2E: 8B 16 111D R			mov	dx, cs:[tmpDxHolder]
+
+ 23A2  9C				pushf
+ 23A3  56				push	si
+ 23A4  06				push	es
+ 23A5  51				push	cx
+ 23A6  53				push	bx
+ 23A7  50				push	ax
+
+ 23A8  2E: 8B 0E 1BC5 R			mov	cx, cs:mybufferptr
+ 23AD  83 F9 00				cmp	cx, 00
+ 23B0  74 48				je	cs:[restorereadthebuffer]
+ 23B2  BE 0000				mov	si, 00
+ 23B5  2E: 03 36 1BC7 R			add	si, cs:readthebuffer
+ 23BA  83 E9 02				sub	cx, 02h
+ 23BD  2E: 89 0E 1BC5 R			mov	cs:mybufferptr, cx
+ 23C2  2E: A1 1BC7 R			mov	ax, cs:readthebuffer
+ 23C6  83 C0 02				add	ax, 02h
+ 23C9  2E: A3 1BC7 R			mov	cs:readthebuffer, ax
+
+ 23CD  BB 0040				mov	bx, 40h
+ 23D0  8E C3				mov	es, bx
+ 23D2  26: 8B 1E 001C			mov	bx, es:[1ch]
+ 23D7  2E: 8B 84 1BC9 R			mov	ax, cs:mybuffer[si]
+ 23DC  26: 89 07			mov	es:[bx], ax
+
+ 23DF  B8 0002				mov	ax, 02h
+ 23E2  26: 01 06 001C			add	es:[1ch], ax
+ 23E7  B8 003C				mov	ax, 3ch
+ 23EA  26: 39 06 001C			cmp	es:[1ch], ax
+ 23EF  76 1C				jbe	cs:[restoreint16regs]
+ 23F1  B8 001E				mov	ax, 1eh
+ 23F4  26: A3 001C			mov	es:[1ch], ax
+ 23F8  EB 13				jmp	cs:[restoreint16regs]
+
+ 23FA				restorereadthebuffer:
+ 23FA  BE 0000				mov	si, 00
+ 23FD  2E: 89 36 1BC7 R			mov	cs:readthebuffer, si
+ 2402  2E: 89 36 1BC5 R			mov	cs:mybufferptr, si
+ 2407  B9 0100				mov	cx, 256d
+ 240A  B8 0000				mov	ax, 00
+
+				;resetbuffer:
+				;	cmp	cx, 00
+				;	je	cs:[restoreint16regs]
+
+				;	mov	cs:mybuffer[si], ax
+				;	inc	si
+				;	dec	cx
+				;	jmp	cs:[resetbuffer]
+
+ 240D				restoreint16regs:
+ 240D  58				pop	ax
+ 240E  5B				pop	bx
+ 240F  59				pop	cx
+ 2410  07				pop	es
+ 2411  5E				pop	si
+ 2412  9D				popf
+
+ 2413  2E: 8E 16 111B R			mov	ss, cs:[oldSSint16]
+ 2418  2E: 8B 26 1119 R			mov	sp, cs:[oldSPint16]
+
+ 241D  2E: FF 2E 2422 R			jmp	cs:[old_interrupt16]
+
+ 2422 00000000			old_interrupt16 DWORD ?
+
+ 2426				int16handler ENDP
+
+				;-------------------------------------------
+ 2426				BiosOutputChar PROC
+ 2426  50				push	ax
+ 2427  9C				pushf
+ 2428  B4 0E				mov	ah, 0eh
+ 242A  CD 10				int	16
+ 242C  58				pop	ax
+ 242D  9D				popf	
+ 242E  C3				ret	
+ 242F				BiosOutputChar ENDP
+
+
+ 242F				end_ISR LABEL BYTE
+
+
+ 242F				installResCode PROC
+ 242F  9C				pushf
+ 2430  56				push	si
+ 2431  06				push	es
+ 2432  57				push	di
+ 2433  51				push	cx
+ 2434  53				push	bx
+ 2435  55				push	bp
+ 2436  50				push	ax
+
+ 2437  2E: 89 2D			mov	cs:[di], bp	;offset
+ 243A  2E: 89 45 02			mov	cs:[di + 2], ax	;segment
+ 243E  8C C9				mov	cx, cs
+ 2440  FA				cli
+ 2441  26: 89 0C			mov	es:[si], cx	;code segment
+ 2444  26: 89 5C FE			mov	es:[si-2], bx	;new handler offset
+ 2448  FB				sti
+
+ 2449  58				pop	ax
+ 244A  5D				pop	bp
+ 244B  5B				pop	bx
+ 244C  59				pop	cx
+ 244D  5F				pop	di
+ 244E  07				pop	es
+ 244F  5E				pop	si
+ 2450  9D				popf
+ 2451  C3				ret
+ 2452				installResCode ENDP
+
+				;-------------------------------------------
+
+ 2452				uninstallResCode PROC 
+ 2452  B9 0000				mov	cx, 0
+ 2455  8E C1				mov	es, cx
+ 2457  FA				cli
+ 2458  26: 89 04			mov	es:[si], ax
+ 245B  26: 89 54 02			mov	es:[si+2], dx
+ 245F  FB				sti
+					
+ 2460  C3				ret	
+ 2461				uninstallResCode ENDP
+
+				;-------------------------------------------
+
+ 2461				checkForClone PROC			;returns boolean value in bp
+ 2461  9C				pushf
+ 2462  56				push	si
+ 2463  06				push	es
+ 2464  52				push	dx
+ 2465  51				push	cx
+ 2466  53				push	bx
+ 2467  50				push	ax
+
+ 2468  8E C0				mov	es, ax
+ 246A  BE 2048 R			mov	si, offset int9handler
+ 246D  B9 000A				mov	cx, num_bytes
+ 2470  BF 0001				mov	di, 1d			;assume I have installed myself
+
+ 2473				Clone:
+ 2473  83 F9 00				cmp	cx, 00
+ 2476  74 18				je	bottomend
+
+ 2478  50				push	ax
+ 2479  B4 0E				mov	ah, 0eh
+ 247B  B0 2A				mov	al, '*'
+ 247D  CD 10				int	16
+ 247F  58				pop	ax
+
+ 2480  2E: 8B 14			mov	dx, cs:[si]
+ 2483  26: 39 17			cmp	es:[bx], dx
+ 2486  75 05				jne	cleardi
+ 2488  46				inc	si
+ 2489  43				inc	bx
+ 248A  49				dec	cx
+ 248B  EB E6				jmp	Clone
+
+ 248D				cleardi:
+ 248D  BF 0000				mov	di, 0h
+
+ 2490				bottomend:
+ 2490  58				pop	ax
+ 2491  5B				pop	bx
+ 2492  59				pop	cx
+ 2493  5A				pop	dx
+ 2494  07				pop	es
+ 2495  5E				pop	si
+ 2496  9D				popf
+ 2497  C3				ret	
+ 2498				checkForClone ENDP
+
+
+				;;; ----------------------------------------------------------------------------
+				;;; OpenMacroFile
+				;;;
+				;;; Opens a macro file for reading
+				;;;
+				;;; Parameters:
+				;;;   None
+				;;; Returns:
+				;;;   BX = file handle
+				;;; ----------------------------------------------------------------------------
+
+ 2498				OpenMacroFile PROC
+ 2498  9C				pushf
+ 2499  50				push	ax
+ 249A  52				push	dx
+ 249B  1E				push	ds
+
+					;; AH = 3Dh
+					;; AL = access and sharing modes (see #01402)
+					;; DS:DX -> ASCIZ filename
+					;; CL = attribute mask of files to look for (server call only)
+
+ 249C  8C CA				mov	dx, cs
+ 249E  8E DA				mov	ds, dx
+ 24A0  BA 111F R			mov	dx, OFFSET cs:MacroFileName
+ 24A3  B4 3D				mov	ah, 3Dh	; Open file
+				;	mov	al, 2		; Read/write
+ 24A5  CD 21				int	DOS
+					;; Return:
+					;; CF clear if successful
+					;; AX = file handle
+					;; CF set on error
+					;; AX = error code (01h,02h,03h,04h,05h,0Ch,56h) (see #01680 at AH=59h)
+
+ 24A7  73 0B				jnc	done
+ 24A9  B0 6F				mov	al, 'o'
+ 24AB  0E E8 FF77			call	cs:[biosoutputchar]
+ 24AF  B8 4C00				mov	ax, TERMINATE
+ 24B2  CD 21				int	DOS
+ 24B4				done:
+ 24B4  8B D8				mov	bx, ax
+ 24B6  1F				pop	ds
+ 24B7  5A				pop	dx
+ 24B8  58				pop	ax
+ 24B9  9D				popf
+ 24BA  C3				ret
+ 24BB				OpenMacroFile ENDP
+
+				;;; ----------------------------------------------------------------------------
+				;;; WriteFile
+				;;;
+				;;; Writes a buffer of bytes to a file handle
+				;;;
+				;;; Parameters:
+				;;;   BX = file handle
+				;;;   CX = number of bytes to write
+				;;;   DS:DX = data to write
+				;;; Returns:
+				;;;   AX = number of bytes written
+				;;; ----------------------------------------------------------------------------
+
+ 24BB				WriteFile PROC
+ 24BB  9C				pushf
+ 24BC  50				push	ax
+					;; AH = 40h
+					;; BX = file handle
+					;; CX = number of bytes to write
+					;; DS:DX -> data to write
+ 24BD  B4 40				mov	ah, 40h
+ 24BF  CD 21				int	DOS
+					;; Return:
+					;; CF clear if successful
+					;; AX = number of bytes actually written
+					;; CF set on error
+					;; AX = error code (05h,06h) (see #01680 at AH=59h/BX=0000h)
+ 24C1  73 0B				jnc	done
+ 24C3  B0 77				mov	al, 'w'
+ 24C5  0E E8 FF5D			call	cs:[biosoutputchar]
+ 24C9  B8 4C00				mov	ax, TERMINATE
+ 24CC  CD 21				int	DOS
+
+ 24CE				done:
+ 24CE  58				pop	ax
+ 24CF  9D				popf
+ 24D0  C3				ret
+ 24D1				WriteFile ENDP
+
+				;;; ----------------------------------------------------------------------------
+				;;; CloseFile
+				;;;
+				;;; Writes a buffer of bytes to a file handle
+				;;;
+				;;; Parameters:
+				;;;   BX = file handle
+				;;; Returns:
+				;;;   None
+				;;; ----------------------------------------------------------------------------
+
+ 24D1				CloseFile PROC
+ 24D1  9C				pushf
+ 24D2  50				push	ax
+
+					;; AH = 3Eh
+					;; BX = file handle
+
+ 24D3  B4 3E				mov	ah, 3Eh
+ 24D5  CD 21				int	DOS
+					;; Return:
+					;; CF clear if successful
+					;; AX destroyed
+					;; CF set on error
+					;; AX = error code (06h) (see #01680 at AH=59h/BX=0000h)
+ 24D7  73 0B				jnc	done
+ 24D9  B0 63				mov	al, 'c'
+ 24DB  0E E8 FF47			call	cs:[biosoutputchar]
+ 24DF  B8 4C00				mov	ax, TERMINATE
+ 24E2  CD 21				int	DOS
+
+ 24E4				done:
+ 24E4  58				pop	ax
+ 24E5  9D				popf
+ 24E6  C3				ret
+ 24E7				CloseFile ENDP
+
+				;;; ----------------------------------------------------------------------------
+				;;; ReadFile
+				;;;
+				;;; Reads bytes from a file handle into a buffer of bytes
+				;;;
+				;;; Parameters:
+				;;;   BX = file handle
+				;;;   CX = number of bytes to read
+				;;;   DS:DX = buffer to fill
+				;;; Returns:
+				;;;   AX = number of bytes written
+				;;; ----------------------------------------------------------------------------
+
+ 24E7				ReadFile PROC
+ 24E7  9C				pushf
+ 24E8  50				push	ax
+					;; AH = 3Fh
+					;; BX = file handle
+					;; CX = number of bytes to read
+					;; DS:DX -> buffer for data
+ 24E9  B4 3F				mov	ah, 3Fh
+ 24EB  CD 21				int	DOS
+					;; Return:
+					;; CF clear if successful
+					;; AX = number of bytes actually read (0 if at EOF before call)
+					;; CF set on error
+					;; AX = error code (05h,06h) (see #01680 at AH=59h/BX=0000h)
+ 24ED  73 0B				jnc	done
+ 24EF  B0 72				mov	al, 'r'
+ 24F1  0E E8 FF31			call	cs:[biosoutputchar]
+ 24F5  B8 4C00				mov	ax, TERMINATE
+ 24F8  CD 21				int	DOS
+ 24FA				done:
+ 24FA  58				pop	ax
+ 24FB  9D				popf
+ 24FC  C3				ret
+ 24FD				ReadFile ENDP
+
+				;-------------------------------------------
+
+ 24FD				setup:
+ 24FD  B9 0000				mov	cx, 0
+ 2500  8E C1				mov	es, cx
+ 2502  BE 0024				mov	si, 24h
+ 2505  26: 8B 1C			mov	bx, es:[si]	;offset
+ 2508  8B EB				mov	bp, bx		;temp storage
+ 250A  83 C6 02				add	si, 02h
+ 250D  26: 8B 04			mov	ax, es:[si]	;segment
+
+ 2510  0E E8 FF4D			call	cs:[checkforClone]
+ 2514  83 FF 01				cmp	di, 01d
+ 2517  75 03 E9 0093			je	cs:[uninstallMycode]
+
+ 251C  9C				pushf
+ 251D  56				push	si
+ 251E  51				push	cx
+ 251F  50				push	ax
+
+ 2520  B0 0D				mov	al, 0dh
+ 2522  B4 0E				mov	ah, 0eh
+ 2524  CD 10				int	16
+ 2526  B0 0A				mov	al, 0ah
+ 2528  B4 0E				mov	ah, 0eh
+ 252A  CD 10				int	16
+
+ 252C  BE 1DCB R			mov	si, offset cs:InfoMsg
+ 252F  B9 0250				mov	cx, 250h
+				;	call	cs:[bioswritestring]
+				;	mov	cx, lengthof InfoMsg
+				;	mov	ah, 0eh
+
+ 2532				l1:
+ 2532  83 F9 00				cmp	cx, 00
+ 2535  74 08				je	cs:[newl]
+
+ 2537  8A 04				mov	al, [si]
+ 2539  CD 10				int	16
+ 253B  46				inc	si
+ 253C  49				dec	cx
+ 253D  EB F3				jmp	cs:[l1]
+
+ 253F				newl:
+ 253F  B0 0D				mov	al, 0dh
+ 2541  CD 10				int	16
+ 2543  B0 0A				mov	al, 0ah
+ 2545  CD 10				int	16
+					
+ 2547  58				pop	ax
+ 2548  59				pop	cx
+ 2549  5E				pop	si
+ 254A  9D				popf
+
+ 254B  EB 00				jmp	cs:[install]
+
+ 254D				install:	
+ 254D  BF 2382 R			mov	di, offset cs:old_interrupt9	;install int9 handler
+
+ 2550  BB 2048 R			mov	bx, offset cs:int9handler
+ 2553  0E E8 FED8			call	cs:[installResCode]
+
+ 2557  BF 2422 R			mov	di, offset cs:old_interrupt16	;install int16 handler
+ 255A  BE 0058				mov	si, 58h
+ 255D  26: 8B 1C			mov	bx, es:[si]
+ 2560  8B EB				mov	bp, bx
+ 2562  83 C6 02				add	si, 02h
+ 2565  26: 8B 04			mov	ax, es:[si]
+ 2568  BB 2386 R			mov	bx, offset cs:int16handler
+ 256B  0E E8 FEC0			call	cs:[installResCode]
+
+ 256F  BE 112D R			mov	si, offset cs:AskUser
+ 2572  B9 002E				mov	cx, lengthof AskUser
+
+ 2575				getinfo:
+ 2575  83 F9 00				cmp	cx, 00
+ 2578  74 0B				je	cs:[wearedone]
+
+ 257A  2E: 8A 04			mov	al, cs:[si]
+ 257D  0E E8 FEA5			call	cs:[biosoutputchar]
+ 2581  49				dec	cx
+ 2582  46				inc	si
+ 2583  EB F0				jmp	cs:[getinfo]
+
+ 2585				wearedone:
+ 2585  B0 0D				mov	al, 0dh
+ 2587  CD 10				int	16
+ 2589  B0 0A				mov	al, 0ah
+ 258B  CD 10				int	16
+
+ 258D  B4 00				mov	ah, 00h
+ 258F  CD 16				int	16h
+ 2591  3C 79				cmp	al, 'y'
+ 2593  75 18				jne	cs:[nonewmacrosdefined]
+
+ 2595  B0 00				mov	al, 0
+ 2597  0E E8 FEFD			call	cs:[OpenMacroFile]
+ 259B  8C CA				mov	dx, cs
+ 259D  8E DA				mov	ds, dx
+ 259F  BA 1593 R			mov	dx, offset cs:MacroDBptr
+ 25A2  B9 0630				mov	cx, 1584d
+ 25A5  0E E8 FF3E			call	cs:[ReadFile]
+ 25A9  0E E8 FF24			call	cs:[CloseFile]
+
+ 25AD				nonewmacrosdefined:
+ 25AD  EB 43				jmp	cs:[bottom]
+
+ 25AF				uninstallMycode:
+ 25AF  8E C0				mov	es, ax	
+ 25B1  BE 0024				mov	si, 24h				;int num for 9 * 4
+ 25B4  B8 0045				mov	ax, 0045h			;offset for int9
+ 25B7  BA 0585				mov	dx, 0585h			;seg for int9
+ 25BA  0E E8 FE94			call	cs:[uninstallResCode]
+
+ 25BE  8E C0				mov	es, ax
+ 25C0  BE 0058				mov	si, 58h				;int num for 16h * 4
+ 25C3  B8 E82E				mov	ax, 0e82eh			;offset for int 16h
+ 25C6  BA F000				mov	dx, 0f000h			;seg for int 16h
+ 25C9  0E E8 FE85			call	cs:[uninstallResCode]
+
+ 25CD  B0 01				mov	al, 1
+ 25CF  0E E8 FEC5			call	cs:[OpenMacroFile]
+ 25D3  89 1E 118F R			mov	filehandle, bx
+ 25D7  8C CA				mov	dx, cs
+ 25D9  8E DA				mov	ds, dx
+ 25DB  BA 1593 R			mov	dx, offset cs:MacroDBptr
+ 25DE  B9 0630				mov	cx, 1584d
+ 25E1  8B 1E 118F R			mov	bx, filehandle
+ 25E5  0E E8 FED2			call	cs:[WriteFile]
+ 25E9  0E E8 FEE4			call	cs:[CloseFile]
+
+ 25ED  B8 4C00				mov	ax, 4c00h
+ 25F0  CD 21				int	21h
+					
+ 25F2				bottom:
+ 25F2  B8 3100				mov	ax, 3100h
+ 25F5  BA 242F R			mov	dx, offset cs:end_ISR
+ 25F8  B1 04				mov	cl, 4
+ 25FA  D3 EA				shr	dx, cl
+ 25FC  42				inc	dx
+ 25FD  CD 21				int	21h
+					
+				END start
+Microsoft (R) Macro Assembler Version 6.11		    10/31/19 21:55:12
+mcdos.asm						     Symbols 2 - 1
+
+
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+DGROUP . . . . . . . . . . . . .	GROUP
+_TEXT  . . . . . . . . . . . . .	16 Bit	 25FF	  Word	  Public  'CODE'	
+_DATA  . . . . . . . . . . . . .	16 Bit	 0000	  Word	  Public  'DATA'	
+STACK  . . . . . . . . . . . . .	16 Bit	 0200	  Para	  Stack	  'STACK'	 
+
+
+Procedures,  parameters and locals:
+
+                N a m e                 Type     Value    Attr
+
+BiosOutputChar . . . . . . . . .	P Near	 2426	  _TEXT	Length= 0009 Public STDCALL
+CloseFile  . . . . . . . . . . .	P Near	 24D1	  _TEXT	Length= 0016 Public STDCALL
+  done . . . . . . . . . . . . .	L Near	 24E4	  _TEXT	
+OpenMacroFile  . . . . . . . . .	P Near	 2498	  _TEXT	Length= 0023 Public STDCALL
+  done . . . . . . . . . . . . .	L Near	 24B4	  _TEXT	
+ReadFile . . . . . . . . . . . .	P Near	 24E7	  _TEXT	Length= 0016 Public STDCALL
+  done . . . . . . . . . . . . .	L Near	 24FA	  _TEXT	
+WriteFile  . . . . . . . . . . .	P Near	 24BB	  _TEXT	Length= 0016 Public STDCALL
+  done . . . . . . . . . . . . .	L Near	 24CE	  _TEXT	
+checkForClone  . . . . . . . . .	P Near	 2461	  _TEXT	Length= 0037 Public STDCALL
+  Clone  . . . . . . . . . . . .	L Near	 2473	  _TEXT	
+  cleardi  . . . . . . . . . . .	L Near	 248D	  _TEXT	
+  bottomend  . . . . . . . . . .	L Near	 2490	  _TEXT	
+installResCode . . . . . . . . .	P Near	 242F	  _TEXT	Length= 0023 Public STDCALL
+int16handler . . . . . . . . . .	P Near	 2386	  _TEXT	Length= 00A0 Public STDCALL
+  restorereadthebuffer . . . . .	L Near	 23FA	  _TEXT	
+  restoreint16regs . . . . . . .	L Near	 240D	  _TEXT	
+int9handler  . . . . . . . . . .	P Near	 2048	  _TEXT	Length= 0345 Public STDCALL
+  sthfunbranch . . . . . . . . .	L Near	 207D	  _TEXT	
+  bxisnormalfun  . . . . . . . .	L Near	 20A1	  _TEXT	
+  checkifenablefun . . . . . . .	L Near	 20E7	  _TEXT	
+  stophavingfun  . . . . . . . .	L Near	 20F6	  _TEXT	
+  disablemacrofun  . . . . . . .	L Near	 2105	  _TEXT	
+  restorefunregs . . . . . . . .	L Near	 210D	  _TEXT	
+  assignment . . . . . . . . . .	L Near	 2117	  _TEXT	
+  movingtoallmacros  . . . . . .	L Near	 2189	  _TEXT	
+  interm1  . . . . . . . . . . .	L Near	 219F	  _TEXT	
+  settempptr . . . . . . . . . .	L Near	 21A1	  _TEXT	
+  checkkybdportlshift  . . . . .	L Near	 21B0	  _TEXT	
+  storekeys  . . . . . . . . . .	L Near	 21CA	  _TEXT	
+  bxisnormal . . . . . . . . . .	L Near	 21DA	  _TEXT	
+  restorelshiftregs  . . . . . .	L Near	 21F2	  _TEXT	
+  interm2  . . . . . . . . . . .	L Near	 21FE	  _TEXT	
+  checkforRshift . . . . . . . .	L Near	 2200	  _TEXT	
+  outputnewline  . . . . . . . .	L Near	 2222	  _TEXT	
+  interm3  . . . . . . . . . . .	L Near	 223A	  _TEXT	
+  donewithnewl . . . . . . . . .	L Near	 223C	  _TEXT	
+  l2 . . . . . . . . . . . . . .	L Near	 224D	  _TEXT	
+  newl2  . . . . . . . . . . . .	L Near	 225D	  _TEXT	
+  restoreregs  . . . . . . . . .	L Near	 2284	  _TEXT	
+  checkkybdport  . . . . . . . .	L Near	 228C	  _TEXT	
+  interm4  . . . . . . . . . . .	L Near	 229F	  _TEXT	
+  restoremyax  . . . . . . . . .	L Near	 22A1	  _TEXT	
+  normalInt  . . . . . . . . . .	L Near	 22A2	  _TEXT	
+  bxtooisnormal  . . . . . . . .	L Near	 22D1	  _TEXT	
+  macrolookup  . . . . . . . . .	L Near	 22F0	  _TEXT	
+  checkifenable  . . . . . . . .	L Near	 2302	  _TEXT	
+  interm5  . . . . . . . . . . .	L Near	 2309	  _TEXT	
+  dosthfun . . . . . . . . . . .	L Near	 230B	  _TEXT	
+  enablemacros . . . . . . . . .	L Near	 231C	  _TEXT	
+  disablemacros  . . . . . . . .	L Near	 2325	  _TEXT	
+  keyfoundindb . . . . . . . . .	L Near	 232E	  _TEXT	
+  siisnormal . . . . . . . . . .	L Near	 2352	  _TEXT	
+  puttingstuff . . . . . . . . .	L Near	 235A	  _TEXT	
+  macrorestoreregs . . . . . . .	L Near	 236E	  _TEXT	
+  bottomint9 . . . . . . . . . .	L Near	 2376	  _TEXT	
+uninstallResCode . . . . . . . .	P Near	 2452	  _TEXT	Length= 000F Public STDCALL
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+@CodeSize  . . . . . . . . . . .	Number	 0000h	 
+@DataSize  . . . . . . . . . . .	Number	 0000h	 
+@Interface . . . . . . . . . . .	Number	 0003h	 
+@Model . . . . . . . . . . . . .	Number	 0001h	 
+@code  . . . . . . . . . . . . .	Text   	 DGROUP
+@data  . . . . . . . . . . . . .	Text   	 DGROUP
+@fardata?  . . . . . . . . . . .	Text   	 FAR_BSS
+@fardata . . . . . . . . . . . .	Text   	 FAR_DATA
+@stack . . . . . . . . . . . . .	Text   	 DGROUP
+AskUser  . . . . . . . . . . . .	Byte	 112D	  _TEXT	
+BIOS . . . . . . . . . . . . . .	Number	 0010h	 
+CR . . . . . . . . . . . . . . .	Number	 000Dh	 
+DOS  . . . . . . . . . . . . . .	Number	 0021h	 
+EnableMsg  . . . . . . . . . . .	Byte	 1FA7	  _TEXT	
+FollowMsg  . . . . . . . . . . .	Byte	 1DFB	  _TEXT	
+FollowupMsg  . . . . . . . . . .	Byte	 1F73	  _TEXT	
+How2Msg  . . . . . . . . . . . .	Byte	 1EE0	  _TEXT	
+How3Msg  . . . . . . . . . . . .	Byte	 1EF6	  _TEXT	
+How4Msg  . . . . . . . . . . . .	Byte	 1F1D	  _TEXT	
+How5Msg  . . . . . . . . . . . .	Byte	 1F44	  _TEXT	
+HowMsg . . . . . . . . . . . . .	Byte	 1EB0	  _TEXT	
+InfoMsg  . . . . . . . . . . . .	Byte	 1DCB	  _TEXT	
+LF . . . . . . . . . . . . . . .	Number	 000Ah	 
+MacroDBptr . . . . . . . . . . .	Word	 1593	  _TEXT	
+MacroDB  . . . . . . . . . . . .	Word	 1595	  _TEXT	
+MacroFileName  . . . . . . . . .	Byte	 111F	  _TEXT	
+NUL  . . . . . . . . . . . . . .	Number	 0000h	 
+NoFunMsg . . . . . . . . . . . .	Byte	 1E60	  _TEXT	
+NoFunupMsg . . . . . . . . . . .	Byte	 2000	  _TEXT	
+OptionsMsg . . . . . . . . . . .	Byte	 1E33	  _TEXT	
+OptionsupMsg . . . . . . . . . .	Byte	 1FD3	  _TEXT	
+TERMINATE  . . . . . . . . . . .	Number	 4C00h	 
+Uninstall  . . . . . . . . . . .	Byte	 1E89	  _TEXT	
+actualascii  . . . . . . . . . .	Word	 115B	  _TEXT	
+allMacrosPtr . . . . . . . . . .	Word	 16C1	  _TEXT	
+allMacros  . . . . . . . . . . .	Word	 16C3	  _TEXT	
+bottom . . . . . . . . . . . . .	L Near	 25F2	  _TEXT	
+chars  . . . . . . . . . . . . .	Byte	 0103	  _TEXT	
+end_ISR  . . . . . . . . . . . .	Byte	 242F	  _TEXT	
+filehandle . . . . . . . . . . .	Word	 118F	  _TEXT	
+getinfo  . . . . . . . . . . . .	L Near	 2575	  _TEXT	
+install  . . . . . . . . . . . .	L Near	 254D	  _TEXT	
+int16label . . . . . . . . . . .	Word	 1119	  _TEXT	
+int16stack . . . . . . . . . . .	Word	 0919	  _TEXT	
+int16status  . . . . . . . . . .	Byte	 1DCA	  _TEXT	
+int9Stack  . . . . . . . . . . .	Word	 0113	  _TEXT	
+int9label  . . . . . . . . . . .	Word	 0913	  _TEXT	
+int9status . . . . . . . . . . .	Byte	 1DC9	  _TEXT	
+l1 . . . . . . . . . . . . . . .	L Near	 2532	  _TEXT	
+l_shift  . . . . . . . . . . . .	Number	 0001h	 
+mybufferptr  . . . . . . . . . .	Word	 1BC5	  _TEXT	
+mybuffer . . . . . . . . . . . .	Word	 1BC9	  _TEXT	
+newl . . . . . . . . . . . . . .	L Near	 253F	  _TEXT	
+nonewmacrosdefined . . . . . . .	L Near	 25AD	  _TEXT	
+num_bytes  . . . . . . . . . . .	Number	 000Ah	 
+oldSPint16 . . . . . . . . . . .	Word	 1119	  _TEXT	
+oldSPint9  . . . . . . . . . . .	Word	 0913	  _TEXT	
+oldSSint16 . . . . . . . . . . .	Word	 111B	  _TEXT	
+oldSSint9  . . . . . . . . . . .	Word	 0915	  _TEXT	
+old_interrupt16  . . . . . . . .	DWord	 2422	  _TEXT	
+old_interrupt9 . . . . . . . . .	DWord	 2382	  _TEXT	
+overflowbuff . . . . . . . . . .	Byte	 202A	  _TEXT	
+r_shift  . . . . . . . . . . . .	Number	 0000h	 
+readmacrosstatus . . . . . . . .	Word	 1BC3	  _TEXT	
+readthebuffer  . . . . . . . . .	Word	 1BC7	  _TEXT	
+setup  . . . . . . . . . . . . .	L Near	 24FD	  _TEXT	
+start  . . . . . . . . . . . . .	L Near	 0100	  _TEXT	
+tempDxHolder . . . . . . . . . .	Word	 0917	  _TEXT	
+tempMacroArray . . . . . . . . .	Word	 1193	  _TEXT	
+tempMacroptr . . . . . . . . . .	Word	 1191	  _TEXT	
+tmpDxHolder  . . . . . . . . . .	Word	 111D	  _TEXT	
+uninstallMycode  . . . . . . . .	L Near	 25AF	  _TEXT	
+wearedone  . . . . . . . . . . .	L Near	 2585	  _TEXT	
+
+	   0 Warnings
+	   0 Errors
